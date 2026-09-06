@@ -47,7 +47,10 @@ let open = false;
 let host = null;
 
 export function openSidebar(tab = 'tail') {
-  if (open) return;
+  // 防御：后台冻结/页面重渲染可能让上次 host 脱离文档，但 open 仍为 true，
+  // 导致再次点击入口被 `if (open) return` 拦截——表现为「点不开」。先清理再开。
+  if (host && !host.isConnected) { host = null; open = false; }
+  if (open && host) return;
   open = true;
   runtime.emit('sidebar:open');
   const { host: h, root } = shadowRoot('div', CSS);

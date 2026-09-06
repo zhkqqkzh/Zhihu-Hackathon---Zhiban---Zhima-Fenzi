@@ -43,6 +43,35 @@ const CSS = `
 
 let ctx = null; // { host, root, close }
 
+// 解释加载统一入口：带「文章+概念」级缓存（§17）与进行中去重。
+// selection.js 在用户点击前就会调用 prefetchExplain 预取，感知延迟≈0。
+const inflight = new Map(); // key: articleId::concept -> Promise
+
+export async function loadExplanation(articleId, concept) {
+  const key = `${articleId}::${concept}`;
+  if (inflight.has(key)) return inflight.get(key);
+  const p = (async () => {
+    let data = await store.getAnswerCache(articleId, concept);
+    if (!data) {
+      const res = await api.explain({
+        concept,
+        context: runtime.page?.context?.text || '',
+        articleId,
+      }).catch(() => null);
+      data = res || { is_concept: true, definition: `「${concept}」的解释暂时拿不到，可以先跳知乎搜索看看。`, in_context: '', prerequisites: [] };
+      await store.saveAnswerCache(articleId, concept, data);
+    }
+    inflight.delete(key);
+    return data;
+  })();
+  inflight.set(key, p);
+  return p;
+}
+
+export function prefetchExplain(articleId, concept) {
+  loadExplanation(articleId, concept).catch(() => {});
+}
+
 export function isPopupOpen() { return !!ctx; }
 
 export function closePopup() {
@@ -90,17 +119,8 @@ export function openPopup({ concept, x, y, articleId }) {
   ctx = { host, close: closePopup };
 
   (async () => {
-    // 提问记录缓存（§17：文章 ID + 选中词，防现场连续提问触发限流）
-    let data = await store.getAnswerCache(articleId, concept);
-    if (!data) {
-      const res = await api.explain({
-        concept,
-        context: runtime.page?.context?.text || '',
-        articleId,
-      }).catch(() => null);
-      data = res || { is_concept: true, definition: `「${concept}」的解释暂时拿不到，可以先跳知乎搜索看看。`, in_context: '', prerequisites: [] };
-      await store.saveAnswerCache(articleId, concept, data);
-    }
+    // 提问记录缓存 + 预取去重（§17；点击前 selection.js 已并行发起）
+    const data = await loadExplanation(articleId, concept);
 
     if (!data.is_concept) {
       renderHead('知伴');
@@ -158,14 +178,17 @@ export function openPopup({ concept, x, y, articleId }) {
             ]);
             list.appendChild(item);
             const links = await fetchPrereqLinks(pre);
-            item.replaceChildren(
+            // 注意：replaceChildren 不展开数组参数，必须把每个 <a> 作为独立节点传入，
+            // 否则数组会被当成单个参数导致链接渲染成纯文本（点击无效）。
+            const kids = [
               el('div', { text: `「${pre}」—— ${links.oneLiner}` }),
-              links.items.slice(0, 2).map((l) =>
+              ...links.items.slice(0, 2).map((l) =>
                 el('a', { class: 'zb-link', href: l.url, target: '_blank', rel: 'noopener', text: `→ ${l.title}（${l.author} · ${l.voteupCount} 赞同）` })),
-              links.items.length === 0 && links.fallback
-                ? el('a', { class: 'zb-link', href: links.fallback, target: '_blank', rel: 'noopener', text: `→ 去知乎搜索「${pre}」` })
-                : null,
-            );
+            ];
+            if (links.items.length === 0 && links.fallback) {
+              kids.push(el('a', { class: 'zb-link', href: links.fallback, target: '_blank', rel: 'noopener', text: `→ 去知乎搜索「${pre}」` }));
+            }
+            item.replaceChildren(...kids);
           }
         } }),
         list,
@@ -200,8 +223,13 @@ async function fetchPrereqLinks(pre) {
   return { items, oneLiner, fallback: zhihuSearchUrl(pre) };
 }
 
-// 点击外部关闭（§15：滚动不关闭——scroll 事件刻意不监听）
+// 点击外部关闭（§15：滚动不关闭——scroll 事件刻意不监听）。
+// 但点浮层里的链接（target=_blank）时不能关：mousedown 移除节点会让随后的 click 不派发，
+// 新标签页打不开——链接放行，让它完成默认导航。
 document.addEventListener('mousedown', (ev) => {
   if (!ctx) return;
-  if (!ev.composedPath().some((n) => n === ctx.host)) closePopup();
+  const path = ev.composedPath();
+  if (path.some((n) => n === ctx.host)) return;
+  if (path.some((n) => n.tagName === 'A')) return;
+  closePopup();
 });

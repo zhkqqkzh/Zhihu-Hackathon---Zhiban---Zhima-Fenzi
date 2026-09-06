@@ -8,7 +8,7 @@ import { interceptSelection } from '../core/stopwords.js';
 import { extractParagraphContext } from '../core/context.js';
 import { collectTextNodes } from '../core/textnodes.js';
 import { expandToSentence } from '../core/quote.js';
-import { openPopup, closePopup, isPopupOpen } from './popup.js';
+import { openPopup, closePopup, isPopupOpen, prefetchExplain } from './popup.js';
 
 const BTN_CSS = `
 :host { all: initial; }
@@ -53,6 +53,28 @@ function hideAsk() {
   askHost = null;
 }
 
+// 段落级上下文 + 引句扩句（§10.4 / §10.7）：showAsk 和 ask 共用。
+// 必须在 prefetch 之前算好并写入 runtime.page.context——loadExplanation 读取它作为请求上下文。
+function computeContext(range, text) {
+  const page = runtime.page;
+  const ctx = extractParagraphContext(range, page.container, page.selectors.paragraph);
+  try {
+    const collected = collectTextNodes(page.container, page.selectors.exclude);
+    const idx = collected.text.indexOf(text);
+    if (idx >= 0) {
+      const paraText = ctx.paragraphText || ctx.text;
+      const pIdx = paraText.indexOf(text);
+      if (pIdx >= 0) ctx.quote = expandToSentence(paraText, pIdx, pIdx + text.length);
+      else ctx.quote = text;
+    } else {
+      ctx.quote = text;
+    }
+  } catch {
+    ctx.quote = text;
+  }
+  return ctx;
+}
+
 function showAsk(range, text) {
   hideAsk();
   // 三层拦截（§15）：非空 / 停用词 / 超长——在这里先做掉，不弹按钮；
@@ -83,28 +105,18 @@ function showAsk(range, text) {
     hideAsk();
     ask(runtime.page, text, range);
   });
+
+  // 预取：选区一出现就并行发起解释请求（§设计：点击时已在途/完成，感知延迟≈0）。
+  // 真实模型下这一步把 12s 的等待从「点击后」挪到「划选后」，用户点开即可见。
+  // 注意：必须先算好 context 写入 runtime.page 再 prefetch——loadExplanation 读它作为请求上下文。
+  if (runtime.page?.articleId) {
+    runtime.page.context = computeContext(range, text);
+    prefetchExplain(runtime.page.articleId, text);
+  }
 }
 
 async function ask(page, text, range) {
-  // 段落级上下文（§10.4）
-  const ctx = extractParagraphContext(range, page.container, page.selectors.paragraph);
-  // 原文引用扩句（§10.7）：在所属段落纯文本中定位概念，扩到完整句
-  try {
-    const collected = collectTextNodes(page.container, page.selectors.exclude);
-    const idx = collected.text.indexOf(text);
-    if (idx >= 0) {
-      // 定位概念所在段落，用段落文本扩句
-      const paraText = ctx.paragraphText || ctx.text;
-      const pIdx = paraText.indexOf(text);
-      if (pIdx >= 0) ctx.quote = expandToSentence(paraText, pIdx, pIdx + text.length);
-      else ctx.quote = text;
-    } else {
-      ctx.quote = text;
-    }
-  } catch {
-    ctx.quote = text;
-  }
-  runtime.page.context = ctx;
+  runtime.page.context = computeContext(range, text);
   // 预扫描懒触发（§10.5）：与第一次提问并行发起
   runtime.emit('prescan:maybe');
   const rect = range.getBoundingClientRect();

@@ -20,7 +20,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["assets/*"],
+      "resources": ["dist/assets/*"],
       "matches": ["https://www.zhihu.com/*", "https://zhuanlan.zhihu.com/*"]
     }
   ]

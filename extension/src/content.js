@@ -30,8 +30,9 @@ setStorageAdapter({
 window.__ZB_TRANSPORT__ = (path, payload) =>
   new Promise((resolve) => chrome.runtime.sendMessage({ type: 'zb-api', path, payload }, resolve));
 
-// 3. 资源基址（看山 GIF、兜底样式表）
-window.__ZB_ASSET_BASE__ = chrome.runtime.getURL('assets/');
+// 3. 资源基址（看山 GIF、兜底样式表）。注意构建产物在 dist/ 下，路径必须带 dist/ 前缀，
+// 否则 chrome-extension://<id>/assets/... 指向扩展根目录（实际文件在 dist/assets/），GIF 会 404。
+window.__ZB_ASSET_BASE__ = chrome.runtime.getURL('dist/assets/');
 
 // 4a. 归属判定（§16）：主路径取 URL 中的回答 ID，兜底读容器属性，最后兜底用页面地址
 function articleIdOf(container) {
