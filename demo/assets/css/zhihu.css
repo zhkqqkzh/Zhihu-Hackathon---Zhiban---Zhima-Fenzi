@@ -50,6 +50,8 @@ body {
 /* 高亮（§10.3：原生自定义高亮 + 伪元素样式） */
 ::highlight(zhiban-concept) { background-color: rgba(5, 109, 232, 0.14); text-decoration: underline wavy rgba(5, 109, 232, 0.55) 1px; text-underline-offset: 4px; }
 ::highlight(zhiban-concept-expanded) { background-color: rgba(214, 122, 39, 0.18); text-decoration: underline wavy rgba(214, 122, 39, 0.7) 1px; text-underline-offset: 4px; }
+/* Learning Hub 回原文锚点闪烁（§新功能：跳转后短暂高亮） */
+::highlight(zhiban-jump) { background-color: rgba(255, 213, 79, 0.55); }
 
 /* 首页 */
 .HomeHero { background: #fff; border-radius: 6px; padding: 32px; margin-bottom: 12px; }

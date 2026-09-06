@@ -3,6 +3,7 @@
 // 铁律 1：全部异步。键前缀统一 'zb:'，一键删除即清空前缀。
 
 import { createMemoryStorage } from '../core/storage.js';
+import { collectTextNodes, offsetsToRanges } from '../core/textnodes.js';
 
 const PREFIX = 'zb:';
 const ARTICLE_KEY = (id) => `${PREFIX}article:${id}`;
@@ -67,6 +68,8 @@ export async function saveConceptRecord(name, patch) {
     firstSource: null,      // { articleId, at }
     review: null,           // { level, lastReviewAt, reviewCount, nextReviewAt }
     firstAskedAt: Date.now(),
+    // Learning Hub（§新功能）：锚点 + 学习次数
+    anchors: [],            // [{ articleId, paragraphIndex, startOffset, endOffset, at }] 每次新语境追加
     ...cur, ...patch,
   };
   await storage.set(CONCEPT_KEY(name), next);
@@ -83,6 +86,24 @@ export async function listArticleRecords() {
   const out = [];
   for (const k of keys) { const r = await storage.get(k); if (r) out.push(r); }
   return out;
+}
+
+// ---- Learning Hub：锚点映射（§新功能）----
+// 把概念记录的单个 anchor（按段落索引+段内文本偏移）映射回 DOM Range。
+// 段落选择器与 core/selectors.js 对齐；排除选择器保证与选区收集一致。
+export function anchorToRanges(anchor, container, paragraphSelector, excludeSelector) {
+  if (!anchor || !container) return [];
+  try {
+    const paras = [...container.querySelectorAll(paragraphSelector || 'p, li, blockquote, h2, h3')];
+    const para = paras[anchor.paragraphIndex] || null;
+    if (!para) return [];
+    const collected = collectTextNodes(para, excludeSelector || null);
+    const start = Math.max(0, anchor.startOffset || 0);
+    const end = Math.min(collected.text.length, anchor.endOffset ?? anchor.startOffset ?? start);
+    return offsetsToRanges(collected, start, Math.max(end, start));
+  } catch {
+    return [];
+  }
 }
 export async function allKnownConceptNames() {
   return (await listConcepts()).map((c) => c.name);

@@ -27,3 +27,16 @@ export function setPageContext(ctx) {
 export function currentBody() {
   return runtime.page?.body || null;
 }
+
+// ---- Learning Hub「回原文」锚点请求（§新功能）----
+// hub.js 在 navigate 前写入；main.js 在文章渲染完成后消费并执行定位高亮。
+// 避免跨模块循环依赖，挂到 runtime 上。
+let pendingAnchor = null;
+export function requestAnchorJump(req) { pendingAnchor = req; }
+export function consumeAnchorJump(articleId) {
+  if (!pendingAnchor || pendingAnchor.articleId !== articleId) return null;
+  const req = pendingAnchor;
+  pendingAnchor = null;
+  return req;
+}
+export function peekAnchorJump() { return pendingAnchor; }

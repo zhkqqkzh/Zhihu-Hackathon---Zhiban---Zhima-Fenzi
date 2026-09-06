@@ -4,8 +4,8 @@ import { parseRoute, navigate, onRouteChange } from './router.js';
 import { renderHome } from './home.js';
 import { renderArticle } from './article.js';
 import { renderIgloo } from './igloo.js';
+import { renderHub } from './hub.js';
 import { renderGuide } from './guide.js';
-import { setPageContext } from './runtime.js';
 import { DEMO_SELECTORS } from '../core/selectors.js';
 import { initEntry } from './entry.js';
 import { initSelection } from './selection.js';
@@ -13,13 +13,16 @@ import { initPrescan } from './prescan.js';
 import { initQuiz } from './quiz.js';
 import { el } from './ui.js';
 import { ARTICLES } from '../data/articles.js';
+import { anchorToRanges } from './store.js';
+import { setPageContext, consumeAnchorJump } from './runtime.js';
 
 function renderTopbar(route) {
   const bar = document.getElementById('zb-topbar');
   const link = (path, label) => {
     const active = (route.name === 'home' && path === '/') ||
       (route.name === 'article' && path === `/article/${route.id}`) ||
-      (route.name === 'igloo' && path === '/igloo');
+      (route.name === 'igloo' && path === '/igloo') ||
+      (route.name === 'hub' && path === '/hub');
     return el('a', { href: `#${path}`, class: active ? 'active' : '', text: label });
   };
   bar.replaceChildren(
@@ -28,6 +31,7 @@ function renderTopbar(route) {
       link('/', '首页'),
       ...ARTICLES.map((a) => link(`/article/${a.id}`, a.title.length > 14 ? a.title.slice(0, 14) + '…' : a.title)),
       link('/igloo', '冰屋'),
+      link('/hub', '学习中心'),
     ]),
     el('span', { class: 'spacer' }),
     el('span', { class: 'mock-badge', text: '知伴 Demo · 流程模拟' }),
@@ -43,6 +47,22 @@ async function dispatch(route) {
       const container = app.querySelector(DEMO_SELECTORS.articleContainer);
       const body = app.querySelector(DEMO_SELECTORS.articleBody);
       setPageContext({ article, articleId: route.id, container, body, selectors: DEMO_SELECTORS });
+      // Learning Hub 回原文：文章渲染完成后消费锚点请求 → 定位 + 高亮
+      const req = consumeAnchorJump(route.id);
+      if (req) {
+        requestAnimationFrame(() => {
+          const paras = [...container.querySelectorAll(DEMO_SELECTORS.paragraph)];
+          const para = paras[req.anchor.paragraphIndex];
+          if (para) para.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          const ranges = anchorToRanges(req.anchor, container, DEMO_SELECTORS.paragraph, DEMO_SELECTORS.exclude);
+          if (ranges.length && typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') {
+            try {
+              CSS.highlights.set('zhiban-jump', new Highlight(...ranges));
+              setTimeout(() => CSS.highlights.delete('zhiban-jump'), 3000);
+            } catch { /* 静默：高亮失败不影响跳转 */ }
+          }
+        });
+      }
     } else {
       setPageContext(null);
     }
@@ -50,6 +70,7 @@ async function dispatch(route) {
   }
   setPageContext(null);
   if (route.name === 'igloo') return renderIgloo(app);
+  if (route.name === 'hub') return renderHub(app);
   if (route.name === 'guide') return renderGuide(app, route.id);
   return renderHome(app);
 }

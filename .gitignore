@@ -4,3 +4,5 @@ scf/node_modules/
 *.zip
 相关资料/
 .DS_Store
+.e2e/
+.workbuddy/

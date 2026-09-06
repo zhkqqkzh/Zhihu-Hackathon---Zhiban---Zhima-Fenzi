@@ -4,6 +4,7 @@
 
 import { shadowRoot, el, assetUrl } from './ui.js';
 import { interceptSelection } from '../core/stopwords.js';
+import { collectTextNodes as collectParagraphTextNodes } from '../core/textnodes.js';
 import { api, sanitizeHtml, zhihuSearchUrl } from './api.js';
 import { runtime } from './runtime.js';
 import * as store from './store.js';
@@ -51,16 +52,24 @@ export async function loadExplanation(articleId, concept) {
   const key = `${articleId}::${concept}`;
   if (inflight.has(key)) return inflight.get(key);
   const p = (async () => {
-    let data = await store.getAnswerCache(articleId, concept);
-    if (!data) {
+    // §17 缓存是 { data, at } 包装（见 store.saveAnswerCache），必须解包 .data
+    const cached = await store.getAnswerCache(articleId, concept);
+    if (cached?.data) {
+      inflight.delete(key);
+      return cached.data;
+    }
+    let data;
+    try {
       const res = await api.explain({
         concept,
         context: runtime.page?.context?.text || '',
         articleId,
-      }).catch(() => null);
+      });
       data = res || { is_concept: true, definition: `「${concept}」的解释暂时拿不到，可以先跳知乎搜索看看。`, in_context: '', prerequisites: [] };
-      await store.saveAnswerCache(articleId, concept, data);
+    } catch {
+      data = { is_concept: true, definition: `「${concept}」的解释暂时拿不到，可以先跳知乎搜索看看。`, in_context: '', prerequisites: [] };
     }
+    await store.saveAnswerCache(articleId, concept, data);
     inflight.delete(key);
     return data;
   })();
@@ -133,6 +142,17 @@ export function openPopup({ concept, x, y, articleId }) {
     renderHead('知伴 · 在这篇里讲明白');
     // 概念记录持久化（§9.2）
     const existing = await store.getConceptRecord(concept);
+    // 原文锚点（§Learning Hub）：记录所在段落索引 + 段内文本偏移，供 hub「回原文」定位高亮。
+    const anchor = captureAnchor(runtime.page, concept);
+    let anchors = existing?.anchors || [];
+    let seenIn = [...new Set([...(existing?.askedIn || []), articleId])];
+    // 锚点去重：同文章同位置不重复记录
+    if (anchor && !anchors.some(
+      (a) => a.articleId === anchor.articleId && a.paragraphIndex === anchor.paragraphIndex &&
+        a.startOffset === anchor.startOffset && a.endOffset === anchor.endOffset,
+    )) {
+      anchors = [...anchors, anchor].slice(-50); // 上限 50 个防膨胀
+    }
     const record = await store.saveConceptRecord(concept, {
       definition: data.definition,
       inContext: data.in_context,
@@ -141,7 +161,8 @@ export function openPopup({ concept, x, y, articleId }) {
       quizPoints: data.quiz_points || [],
       quote: runtime.page?.context?.quote || runtime.page?.context?.selection || '',
       firstSource: existing?.firstSource || { articleId, at: Date.now() },
-      askedIn: [...new Set([...(existing?.askedIn || []), articleId])], // 边验证（§11.8）：记录问过它的所有文章
+      askedIn: seenIn, // 边验证（§11.8）：记录问过它的所有文章
+      anchors,         // Learning Hub 锚点（§新功能）
       mastery: existing?.mastery || 'unvisited',
     });
     if (!existing) runtime.emit('concept:first', record);
@@ -204,6 +225,40 @@ export function openPopup({ concept, x, y, articleId }) {
   })();
 
   return ctx;
+}
+
+// 原文锚点捕获（§Learning Hub 卖点 1）：
+// 在正文容器里找 concept 所在段落，记录 { articleId, paragraphIndex, startOffset, endOffset }。
+// 偏移为"该段收集后的纯文本偏移"，与 core/textnodes.js 的 offsetsToRanges 对齐，可回映射高亮。
+function captureAnchor(page, concept) {
+  try {
+    if (!page?.container || !page?.selectors) return null;
+    const paras = [...page.container.querySelectorAll(page.selectors.paragraph || 'p, li, blockquote, h2, h3')];
+    if (!paras.length) return null;
+    const selText = page.context?.selection || concept;
+    // 1) 优先：选区文本命中的段落
+    let paraIdx = paras.findIndex((p) => p.textContent.includes(selText));
+    if (paraIdx < 0) {
+      // 2) 兜底：记录段落元素（selection.js 缓存了 paragraph）按引用定位
+      paraIdx = page.context?.paragraph ? paras.indexOf(page.context.paragraph) : -1;
+    }
+    if (paraIdx < 0) paraIdx = 0;
+    const para = paras[paraIdx];
+    const collected = collectParagraphTextNodes(para, page.selectors.exclude || null);
+    const q = selText || concept;
+    let start = collected.text.indexOf(q);
+    if (start < 0) start = collected.text.indexOf(concept);
+    if (start < 0) { start = 0; }
+    return {
+      articleId: page.articleId || '',
+      paragraphIndex: paraIdx,
+      startOffset: start,
+      endOffset: Math.min(collected.text.length, start + Math.max(q.length, concept.length)),
+      at: Date.now(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 // 前置知识：一句话解释（复用 explain 缓存/接口）+ 站内搜索链接（§四-2 / §17 缓存）

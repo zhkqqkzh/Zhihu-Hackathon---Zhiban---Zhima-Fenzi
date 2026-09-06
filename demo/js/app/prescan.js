@@ -10,7 +10,7 @@ import { collectTextNodes } from '../core/textnodes.js';
 import { matchRate } from '../core/match.js';
 import { registerConceptHighlights, clearConceptHighlights } from '../core/highlight.js';
 import { toast } from './ui.js';
-import { difficultyMessage } from '../core/difficulty.js';
+import { difficultyMessage, previewDifficulty } from '../core/difficulty.js';
 
 const inFlight = new Map(); // articleId -> Promise
 

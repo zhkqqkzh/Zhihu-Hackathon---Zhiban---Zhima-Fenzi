@@ -135,3 +135,124 @@ export function sortClusterForCuration(cluster, edges) {
   });
   return arts;
 }
+
+// ================= Learning Hub 诊断（§新功能：学习总结 + 缺口诊断） =================
+// 纯函数，Node 可测；hub 页与测试脚本共用。
+
+// 主题-概念静态清单（预设）：每个主题的"常见概念"全集。
+// 用于按主题统计已学/总数。仅覆盖 demo 语料涉及的 ML 主题，可后续扩展。
+export const TOPIC_LEXICON = {
+  '机器学习基础': ['机器学习', '监督学习', '无监督学习', '特征', '标签', '过拟合', '欠拟合', '训练集', '测试集', '模型', '泛化'],
+  '深度学习': ['深度学习', '神经网络', '反向传播', '链式法则', '损失函数', '梯度', '偏导数', '激活函数', '卷积', '循环神经网络', '注意力', 'Transformer', '嵌入'],
+  '优化算法': ['梯度下降', '随机梯度下降', '导数', '学习率', '动量', 'Adam', '正则化', '归一化', '批归一化'],
+  '网络结构': ['卷积神经网络', '循环神经网络', 'Transformer', '残差连接', '注意力机制', 'Embedding'],
+  '数据处理': ['数据清洗', '特征工程', '数据增强', '采样', '标注'],
+};
+
+// 归一化概念名→主题（一个概念可属多主题，取第一个命中的）
+export function topicOf(term) {
+  for (const [topic, words] of Object.entries(TOPIC_LEXICON)) {
+    if (words.includes(term)) return topic;
+  }
+  return null;
+}
+
+// 构建图谱数据（含缺口节点）：concepts = 概念记录数组（含 name/prerequisites）。
+// 返回 { nodes: [...], edges: [...] }，供 hub 力导向图渲染。
+// 节点状态：count(去重文章数)>=2 绿 / ==1 黄；被依赖但从未学过 → 红（gap: true）。
+export function buildHubGraph(concepts) {
+  const nodes = [];
+  const nodeMap = new Map(); // name -> node
+  const edges = [];
+  const edgeKeys = new Set();
+  const learned = new Map(); // name -> { count }（按 askedIn/firstSource 去重文章数）
+
+  for (const c of concepts || []) {
+    const seen = new Set([
+      ...(Array.isArray(c.askedIn) ? c.askedIn : []),
+      ...(c.firstSource?.articleId ? [c.firstSource.articleId] : []),
+      c.articleId ? [c.articleId] : [],
+    ].flat());
+    const count = seen.size || 1;
+    learned.set(c.name, { count, seen });
+  }
+  // 先建已学节点
+  for (const [name, { count }] of learned) {
+    const node = { id: name, label: name, learned: true, count, gap: false, prereqs: new Set() };
+    nodeMap.set(name, node);
+    nodes.push(node);
+  }
+  // 缺口节点 + 边
+  for (const c of concepts || []) {
+    const fromNode = nodeMap.get(c.name);
+    for (const pre of c.prerequisites || []) {
+      if (!pre || pre === c.name) continue;
+      if (!nodeMap.has(pre)) {
+        const gap = { id: pre, label: pre, learned: false, count: 0, gap: true, prereqs: new Set() };
+        nodeMap.set(pre, gap);
+        nodes.push(gap);
+      }
+      const toNode = nodeMap.get(pre);
+      // prereq → concept 的有向边；缺口边记录"谁依赖它"
+      const key = `${pre}→${c.name}`;
+      if (!edgeKeys.has(key)) {
+        edgeKeys.add(key);
+        edges.push({ source: pre, target: c.name });
+      }
+      if (toNode.gap && fromNode) {
+        if (!toNode.dependedBy) toNode.dependedBy = new Set();
+        toNode.dependedBy.add(c.name);
+      }
+    }
+  }
+  // 序列化（去掉 Set）
+  for (const n of nodes) {
+    n.dependedBy = n.dependedBy ? [...n.dependedBy] : [];
+    n.prereqs = n.prereqs ? [...n.prereqs] : [];
+  }
+  return { nodes, edges };
+}
+
+// 诊断报告（纯规则，不调 AI）：
+// 输入 concepts（数组），按 TOPIC_LEXICON 主题聚合并统计已学/总数；
+// 同时统计缺口概念（prereq 引用但未学，且出现在主题清单里的优先）。
+// 返回 { topics, gaps, summary, weakTopics, suggestedGaps }
+export function computeDiagnosis(concepts) {
+  const topics = Object.keys(TOPIC_LEXICON).map((name) => ({ name, learned: new Set(), total: TOPIC_LEXICON[name].length }));
+  const learnedNames = new Set((concepts || []).map((c) => c.name));
+  const prereqNames = new Set();
+  for (const c of concepts || []) {
+    for (const pre of c.prerequisites || []) if (pre && pre !== c.name) prereqNames.add(pre);
+  }
+  const gapNames = [...prereqNames].filter((n) => !learnedNames.has(n));
+
+  // 主题归属：概念可能属多主题，这里统计已学集合
+  for (const c of concepts || []) {
+    for (const t of topics) if (TOPIC_LEXICON[t.name].includes(c.name)) t.learned.add(c.name);
+  }
+  const topicList = topics.map((t) => ({
+    name: t.name,
+    learned: t.learned.size,
+    total: t.total,
+    ratio: t.total ? +(t.learned.size / t.total).toFixed(2) : 0,
+  })).sort((a, b) => a.ratio - b.ratio);
+
+  // 缺口按主题聚合：某主题清单中的未学前置概念
+  const gapByTopic = new Map();
+  for (const g of gapNames) {
+    const t = topicOf(g);
+    if (t) gapByTopic.set(t, [...(gapByTopic.get(t) || []), g]);
+  }
+  const weakTopics = topicList.filter((t) => t.ratio < 0.5).slice(0, 3);
+  const suggestedGaps = [...gapByTopic.entries()]
+    .sort((a, b) => (topicList.find((t) => t.name === b[0])?.ratio || 1) - (topicList.find((t) => t.name === a[0])?.ratio || 1))
+    .flatMap(([, names]) => names).slice(0, 3);
+
+  const totalLearned = learnedNames.size;
+  const summary = totalLearned === 0
+    ? '还没有学过的概念记录。去文章里划选几个概念，「知伴」会帮你积累成图谱。'
+    : `已积累 ${totalLearned} 个概念` +
+      (weakTopics.length ? `，薄弱主题：${weakTopics.map((t) => t.name).join('、')}` : '') +
+      (suggestedGaps.length ? `。建议优先补：${suggestedGaps.join('、')}` : '。继续阅读即可保持节奏');
+  return { topicList, gaps: [...gapByTopic.entries()].map(([name, list]) => ({ name, list })), summary, weakTopics, suggestedGaps };
+}
