@@ -1,0 +1,65 @@
+/* 仿知乎排版（Demo 站点皮肤，§18.1） */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --zb-blue: #056de8;
+  --zb-text: #121212;
+  --zb-gray: #8590a6;
+  --zb-border: #e7e7e7;
+  --zb-bg: #f6f6f6;
+}
+html { font-size: 15px; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  background: var(--zb-bg);
+  color: var(--zb-text);
+}
+.Topbar {
+  position: sticky; top: 0; z-index: 100;
+  height: 52px; background: #fff; border-bottom: 1px solid var(--zb-border);
+  display: flex; align-items: center; gap: 24px; padding: 0 24px;
+}
+.Topbar .logo { font-size: 20px; font-weight: 700; color: var(--zb-blue); letter-spacing: 1px; }
+.Topbar nav { display: flex; gap: 20px; color: #444; }
+.Topbar nav a { color: inherit; text-decoration: none; font-size: 15px; }
+.Topbar nav a.active { color: var(--zb-blue); font-weight: 600; }
+.Topbar .spacer { flex: 1; }
+.Topbar .mock-badge { font-size: 12px; color: var(--zb-gray); border: 1px solid var(--zb-border); border-radius: 4px; padding: 2px 8px; }
+
+.App { max-width: 1000px; margin: 0 auto; padding: 16px; }
+.QuestionHeader { background: #fff; border-radius: 6px; padding: 20px 24px; margin-bottom: 12px; }
+.QuestionHeader h1 { font-size: 22px; line-height: 1.5; }
+.QuestionHeader .meta { color: var(--zb-gray); font-size: 13px; margin-top: 8px; }
+.AnswerCard { background: #fff; border-radius: 6px; padding: 20px 24px; }
+.AnswerAuthor { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.AnswerAuthor .avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: linear-gradient(135deg, #056de8, #06b7fd);
+  color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700;
+}
+.AnswerAuthor .name { font-weight: 600; }
+.AnswerAuthor .bio { color: var(--zb-gray); font-size: 13px; }
+.AnswerVote { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--zb-border); color: var(--zb-gray); font-size: 14px; }
+
+/* 正文排版 */
+.zb-RichText { font-size: 16px; line-height: 1.9; }
+.zb-RichText p { margin: 0 0 1em; }
+.zb-RichText h2 { font-size: 19px; margin: 1.4em 0 0.6em; }
+.zb-RichText strong { font-weight: 700; }
+.zb-RichText a { color: var(--zb-blue); text-decoration: none; }
+
+/* 高亮（§10.3：原生自定义高亮 + 伪元素样式） */
+::highlight(zhiban-concept) { background-color: rgba(5, 109, 232, 0.14); text-decoration: underline wavy rgba(5, 109, 232, 0.55) 1px; text-underline-offset: 4px; }
+::highlight(zhiban-concept-expanded) { background-color: rgba(214, 122, 39, 0.18); text-decoration: underline wavy rgba(214, 122, 39, 0.7) 1px; text-underline-offset: 4px; }
+
+/* 首页 */
+.HomeHero { background: #fff; border-radius: 6px; padding: 32px; margin-bottom: 12px; }
+.HomeHero h1 { font-size: 26px; margin-bottom: 8px; }
+.HomeHero .sub { color: var(--zb-gray); margin-bottom: 20px; }
+.HomeGuide { background: #fff; border-radius: 6px; padding: 28px 32px; }
+.HomeGuide .lead { color: var(--zb-gray); font-size: 14px; margin-bottom: 16px; border-left: 3px solid var(--zb-blue); padding-left: 12px; line-height: 1.8; }
+.HomeGuide h2 { font-size: 20px; margin-bottom: 16px; }
+.ArticleList { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 16px; }
+.ArticleCard { background: #fff; border: 1px solid var(--zb-border); border-radius: 6px; padding: 16px; cursor: pointer; }
+.ArticleCard:hover { border-color: var(--zb-blue); }
+.ArticleCard h3 { font-size: 16px; margin-bottom: 8px; }
+.ArticleCard .meta { color: var(--zb-gray); font-size: 13px; }

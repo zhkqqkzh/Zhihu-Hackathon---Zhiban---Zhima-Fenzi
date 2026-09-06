@@ -1,0 +1,8 @@
+{
+  "name": "zhiban-scf",
+  "version": "0.1.0",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
