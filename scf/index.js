@@ -1,0 +1,290 @@
+// 知伴 · SCF Web 函数（Express 模板，Node 12 兼容）
+// 需要设置的环境变量：
+//   ZHIPU_API_KEY      —— 智谱 GLM API Key（大模型调用，必须）
+//   ZHIHU_ACCESS_SECRET —— 知乎开放平台 Access Secret（站内搜索；不配则搜索降级）
+//
+// 接口：
+//   GET  /ping      健康检查 → {"ok": true}
+//   POST /ask       选中即问：{ term, context } → { definition, context_why, prerequisites }
+//   POST /prescan   全文概念预扫描：{ text, articleId } → { concepts: [...] }
+//   POST /search    知乎站内搜索代理：{ query } → { items: [...] }
+//   POST /quiz      看山提问：{ concept, quote } → { question, quizPoints }
+//                   或 { concept, quote, answer } → { verdict, feedback }
+//
+// Node 12 兼容说明：不使用可选链（?.）与空值合并（??）；
+// 无全局 fetch，用内置 https 模块，req.setTimeout(55000) 实现超时
+//（平台 60s 超时前主动熔断）。云函数执行超时请调至 60 秒。
+
+var express = require('express');
+var https = require('https');
+
+// 大模型端点：智谱 GLM（OpenAI 兼容）
+var LLM_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+var LLM_MODEL = 'glm-4.5-air';
+var ZHIHU_SEARCH_URL = 'https://developer.zhihu.com/api/v1/content/zhihu_search';
+
+var app = express();
+app.use(express.json({ limit: '512kb' }));
+
+// CORS：网关已配置，函数自身也正确处理预检（双保险）
+app.use(function (req, res, next) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+  next();
+});
+
+// ---- Prompt 模板（/ask 用，逐字固定，只填入 term/context）----
+function buildPrompt(term, context) {
+  return '下面是知乎一篇回答的片段：\n' +
+    context + '\n' +
+    '用户选中了「' + term + '」。请输出 JSON，包含三个字段：\n' +
+    'definition：一句话定义，不超过 40 字\n' +
+    'context_why：这个概念在上述片段里扮演什么角色、作者为什么提到它，不超过 60 字，必须紧扣片段具体内容\n' +
+    'prerequisites：理解它需要先掌握的概念名数组，最多 2 个。\n' +
+    '判定标准：只输出「不懂它就完全无法理解当前概念」的那些概念。\n' +
+    '「懂了更好、不懂也能凑合」的不算，「同一领域的邻近概念」也不算。\n' +
+    '想不出就给 1 个。宁可只给 1 个真正必要的，也不要给 2 个沾边的。\n' +
+    '确实毫无前置的可以返回空数组，但绝大多数专业概念至少有一个前置。\n' +
+    '禁止写"数学""物理""基础"这类过宽的词，要输出具体概念名。\n' +
+    '只输出 JSON，不要任何额外文字。';
+}
+
+// 预扫描 Prompt（§10.5：概念名必须逐字照抄正文，否则变成幽灵标记）
+var PRESCAN_PROMPT = '从用户给出的知乎回答正文中抽取 5-15 个专业概念，输出 JSON：{"concepts": ["..."]}。\n' +
+  '硬性要求：\n' +
+  '- 只输出正文中真实出现过的词，逐字照抄，不得改写、增删字、加后缀。\n' +
+  '- 不输出虚词、人名、机构名、人人皆知的通用词。\n' +
+  '- 按在正文中首次出现的顺序排列。\n' +
+  '- 只输出 JSON，不要任何解释。';
+
+// 看山提问：概念性追问，不是背诵
+function quizGenPrompt(concept, quote) {
+  return '概念：「' + concept + '」\n原文引用：' + quote + '\n' +
+    '请围绕这个概念出一道概念性追问（不是背诵题），检验读者是否真懂。输出 JSON：\n' +
+    '{"question": "不超过 50 字的追问", "quiz_points": ["判定要点1", "要点2"]}';
+}
+
+function quizJudgePrompt(concept, quote, question, answer) {
+  return '你是看山，一只做人类学研究的北极狐，旁观者、同行者，不是老师。好奇、温和、略带自嘲。\n' +
+    '判断读者对概念追问的回答。输出 JSON：\n' +
+    '{"verdict": "correct | partial | wrong", "feedback": "不看对错说事，给出补充解释，不超过 80 字"}\n' +
+    '概念：「' + concept + '」\n原文引用：' + quote + '\n追问：' + question + '\n读者的回答：' + answer + '\n' +
+    '判不出一律记为 "partial"。只输出 JSON。';
+}
+
+// ---- Node 12 无全局 fetch：内置 https 请求助手 ----
+function httpsRequestJson(method, urlStr, headers, body, timeoutMs) {
+  return new Promise(function (resolve, reject) {
+    var url = new URL(urlStr); // Node 12 已有 WHATWG URL
+    var hasBody = body !== null && body !== undefined;
+    var payload = hasBody ? JSON.stringify(body) : null;
+    var req = https.request({
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: method,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }, function (res) {
+      var chunks = [];
+      res.on('data', function (c) { chunks.push(c); });
+      res.on('end', function () {
+        resolve({
+          status: res.statusCode,
+          text: Buffer.concat(chunks).toString('utf8')
+        });
+      });
+    });
+    req.on('error', function (e) { reject(e); });
+    req.setTimeout(timeoutMs, function () {
+      req.destroy(new Error('upstream timeout after ' + timeoutMs + 'ms'));
+    });
+    for (var k in headers) {
+      if (Object.prototype.hasOwnProperty.call(headers, k)) req.setHeader(k, headers[k]);
+    }
+    if (payload !== null) {
+      req.setHeader('Content-Length', Buffer.byteLength(payload));
+      req.write(payload);
+    }
+    req.end();
+  });
+}
+
+function getApiKey() {
+  return process.env.ZHIPU_API_KEY || process.env.DEEPSEEK_API_KEY || '';
+}
+
+// 调 GLM，JSON 模式；返回解析后的对象，失败抛错（由路由层转 502）
+async function callLlm(prompt) {
+  var apiKey = getApiKey();
+  if (!apiKey) {
+    var e = new Error('服务器未配置 ZHIPU_API_KEY');
+    e.status = 500;
+    throw e;
+  }
+  var upstream = await httpsRequestJson('POST', LLM_URL,
+    { Authorization: 'Bearer ' + apiKey },
+    {
+      model: LLM_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      response_format: { type: 'json_object' }
+    },
+    55000);
+  if (upstream.status < 200 || upstream.status >= 300) {
+    var e2 = new Error('大模型 API 返回 ' + upstream.status + ': ' + upstream.text.slice(0, 200));
+    e2.status = 502;
+    throw e2;
+  }
+  var payload = JSON.parse(upstream.text);
+  var content = payload && payload.choices && payload.choices[0] &&
+    payload.choices[0].message && payload.choices[0].message.content;
+  if (typeof content !== 'string' || !content) {
+    var e3 = new Error('大模型 API 响应缺少内容');
+    e3.status = 502;
+    throw e3;
+  }
+  return JSON.parse(content); // 模型输出非合法 JSON 时抛错，由路由层转 500/502
+}
+
+function llmError(e) {
+  var status = e && e.status ? e.status : 502;
+  return { status: status, body: { error: String((e && e.message) || e).slice(0, 300) } };
+}
+
+// ---- 路由 ----
+
+app.get('/ping', function (req, res) {
+  res.json({ ok: true });
+});
+
+app.post('/ask', async function (req, res) {
+  var body = req.body || {};
+  var term = typeof body.term === 'string' ? body.term.trim() : '';
+  var context = typeof body.context === 'string' ? body.context.trim() : '';
+  if (!term || !context) {
+    res.status(400).json({ error: 'term 和 context 均为必填字符串' });
+    return;
+  }
+  try {
+    var result = await callLlm(buildPrompt(term, context));
+    res.json(result);
+  } catch (e) {
+    var err = llmError(e);
+    res.status(err.status).json(err.body);
+  }
+});
+
+app.post('/prescan', async function (req, res) {
+  var body = req.body || {};
+  var text = typeof body.text === 'string' ? body.text.slice(0, 8000) : '';
+  if (!text) {
+    res.status(400).json({ error: 'text 为必填字符串' });
+    return;
+  }
+  try {
+    var result = await callLlm(PRESCAN_PROMPT + '\n\n正文：\n' + text);
+    var concepts = (result && Array.isArray(result.concepts) ? result.concepts : [])
+      .map(function (s) { return String(s).trim(); })
+      .filter(Boolean)
+      .slice(0, 15);
+    res.json({ concepts: concepts });
+  } catch (e) {
+    // 降级（§10.5）：预扫描失败不阻塞核心功能，返回空词表
+    if (e && e.status === 400) { res.status(400).json({ error: e.message }); return; }
+    res.json({ concepts: [], _degraded: true });
+  }
+});
+
+app.post('/search', async function (req, res) {
+  var body = req.body || {};
+  var query = typeof body.query === 'string' ? body.query.trim() : '';
+  if (!query) {
+    res.status(400).json({ error: 'query 为必填字符串' });
+    return;
+  }
+  var secret = process.env.ZHIHU_ACCESS_SECRET;
+  if (!secret) {
+    // 降级（§13.4）：返回可渲染的空结果，前端兜底跳知乎搜索页
+    res.json({ items: [], _degraded: true });
+    return;
+  }
+  try {
+    var url = ZHIHU_SEARCH_URL + '?Query=' + encodeURIComponent(query) + '&Count=10';
+    var upstream = await httpsRequestJson('GET', url, {
+      Authorization: 'Bearer ' + secret,
+      'X-Request-Timestamp': String(Math.floor(Date.now() / 1000))
+    }, null, 8000);
+    if (upstream.status < 200 || upstream.status >= 300) {
+      throw new Error('zhihu_search 返回 ' + upstream.status);
+    }
+    var payload = JSON.parse(upstream.text);
+    var rawItems = payload && payload.Data && Array.isArray(payload.Data.Items) ? payload.Data.Items : [];
+    var items = rawItems.map(function (it) {
+      var excerpt = String(it.ContentText || '');
+      return {
+        title: String(it.Title || ''),
+        author: String(it.AuthorName || ''),
+        url: String(it.Url || ''),
+        excerpt: excerpt,
+        voteupCount: Number(it.VoteUpCount || 0),
+        length: excerpt.length
+      };
+    }).filter(function (it) { return it.title && it.url; });
+    // 排序（§13.2）：赞数为主分，对超长内容（长文信号）按对数降权
+    items.sort(function (a, b) {
+      function score(it) {
+        var penalty = it.length > 600 ? Math.log2(it.length / 600) + 1 : 1;
+        return it.voteupCount / penalty;
+      }
+      return score(b) - score(a);
+    });
+    res.json({ items: items.slice(0, 3) });
+  } catch (e) {
+    res.json({ items: [], _degraded: true, _reason: String((e && e.message) || e).slice(0, 120) });
+  }
+});
+
+app.post('/quiz', async function (req, res) {
+  var body = req.body || {};
+  var concept = typeof body.concept === 'string' ? body.concept.trim() : '';
+  var quote = typeof body.quote === 'string' ? body.quote.slice(0, 500) : '';
+  var answer = typeof body.answer === 'string' ? body.answer.trim() : '';
+  if (!concept) {
+    res.status(400).json({ error: 'concept 为必填字符串' });
+    return;
+  }
+  try {
+    if (!answer) {
+      // 第一阶段：生成追问
+      var gen = await callLlm(quizGenPrompt(concept, quote));
+      res.json({
+        question: String(gen && gen.question || ''),
+        quizPoints: Array.isArray(gen && gen.quiz_points) ? gen.quiz_points.map(String) : []
+      });
+      return;
+    }
+    // 第二阶段：判定回答
+    var question = typeof body.question === 'string' ? body.question : '';
+    var judge = await callLlm(quizJudgePrompt(concept, quote, question, answer));
+    var verdict = judge && judge.verdict;
+    if (verdict !== 'correct' && verdict !== 'partial' && verdict !== 'wrong') verdict = 'partial';
+    res.json({ verdict: verdict, feedback: String(judge && judge.feedback || '') });
+  } catch (e) {
+    var err = llmError(e);
+    res.status(err.status).json(err.body);
+  }
+});
+
+// SCF Web 函数通过模板适配层托管；本地直接运行 node index.js 便于联调
+if (require.main === module) {
+  var port = Number(process.env.PORT || 9000);
+  app.listen(port, function () { console.log('zhiban-scf listening on :' + port); });
+}
+
+module.exports = app;

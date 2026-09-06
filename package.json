@@ -1,0 +1,19 @@
+{
+  "name": "zhiban",
+  "version": "0.1.0",
+  "description": "知伴 · 和看山一起读 —— 知乎黑客松 2026 校园新锐季",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "node server/index.js",
+    "check": "node scripts/check-syntax.mjs && node scripts/check-imports.mjs",
+    "test:core": "node scripts/test-core.mjs",
+    "test:api": "node scripts/test-api.mjs",
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "build:ext": "node extension/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "express": "^5.2.1"
+  }
+}

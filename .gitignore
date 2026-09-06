@@ -1,0 +1,7 @@
+node_modules/
+extension/dist/
+scf/node_modules/
+*.zip
+相关资料/
+.workbuddy/
+.DS_Store
