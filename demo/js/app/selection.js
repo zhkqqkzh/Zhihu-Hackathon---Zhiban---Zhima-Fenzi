@@ -119,6 +119,5 @@ async function ask(page, text, range) {
   runtime.page.context = computeContext(range, text);
   // 预扫描懒触发（§10.5）：与第一次提问并行发起
   runtime.emit('prescan:maybe');
-  const rect = range.getBoundingClientRect();
-  openPopup({ concept: text, x: rect.left + rect.width / 2, y: rect.bottom, articleId: page.articleId });
+  openPopup({ concept: text, articleId: page.articleId }); // 右下角浮窗，无需选区坐标
 }

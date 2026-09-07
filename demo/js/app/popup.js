@@ -5,7 +5,7 @@
 import { shadowRoot, el, assetUrl } from './ui.js';
 import { interceptSelection } from '../core/stopwords.js';
 import { collectTextNodes as collectParagraphTextNodes } from '../core/textnodes.js';
-import { api, sanitizeHtml, zhihuSearchUrl } from './api.js';
+import { api, sanitizeHtml, zhihuSearchUrl, scfExplainStream, STREAM_EXPLAIN } from './api.js';
 import { runtime } from './runtime.js';
 import * as store from './store.js';
 import { getGuideTrigger } from './guide.js';
@@ -15,17 +15,19 @@ const CSS = `
 :host { all: initial; }
 * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
 .zb-pop {
-  position: fixed; z-index: 99999; width: 340px; max-width: calc(100vw - 24px);
+  position: fixed; right: 16px; bottom: 16px; z-index: 99999; width: 340px; max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px); display: flex; flex-direction: column;
   background: #fff; border: 1px solid #e7e7e7; border-radius: 12px;
   box-shadow: 0 8px 30px rgba(18,18,18,.14); overflow: hidden;
   animation: zbin .16s ease-out;
 }
-@keyframes zbin { from { opacity: 0; transform: translateY(6px); } }
-.zb-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px 8px; border-bottom: 1px solid #f0f0f0; }
+@keyframes zbin { from { opacity: 0; transform: translateY(10px); } }
+.zb-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px 8px; border-bottom: 1px solid #f0f0f0; flex: none; }
 .zb-fox { width: 26px; height: 26px; border-radius: 50%; }
 .zb-title { font-size: 13px; color: #8590a6; flex: 1; }
-.zb-x { cursor: pointer; color: #8590a6; border: 0; background: none; font-size: 16px; }
-.zb-body { padding: 12px 14px; max-height: 55vh; overflow: auto; }
+.zb-x { cursor: pointer; color: #8590a6; border: 0; background: none; font-size: 16px; padding: 0 2px; }
+.zb-x:hover { color: #121212; }
+.zb-body { padding: 12px 14px; overflow: auto; }
 .zb-concept { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
 .zb-def { font-size: 14px; line-height: 1.7; color: #121212; }
 .zb-ctx { font-size: 13px; line-height: 1.7; color: #444; margin-top: 10px; padding: 8px 10px; background: #f7f9fc; border-radius: 8px; }
@@ -44,41 +46,87 @@ const CSS = `
 
 let ctx = null; // { host, root, close }
 
-// 解释加载统一入口：带「文章+概念」级缓存（§17）与进行中去重。
-// selection.js 在用户点击前就会调用 prefetchExplain 预取，感知延迟≈0。
-const inflight = new Map(); // key: articleId::concept -> Promise
+// 解释加载统一入口：会话级管理（§17 缓存 + 预取 + 流式去重共用同一次请求）。
+// sessions: key articleId::concept -> { promise, raw, subs }
+// selection.js 在用户点击前就会调用 prefetchExplain 预取；线上模式为 SSE 流式，
+// 弹窗打开后订阅 subscribeExplainRaw 即可「一边接收一边显示」。
+const sessions = new Map();
 
-export async function loadExplanation(articleId, concept) {
+const fallbackExplain = (concept) => ({
+  is_concept: true,
+  definition: `「${concept}」的解释暂时拿不到，可以先跳知乎搜索看看。`,
+  in_context: '',
+  prerequisites: [],
+});
+
+function startSession(articleId, concept) {
   const key = `${articleId}::${concept}`;
-  if (inflight.has(key)) return inflight.get(key);
-  const p = (async () => {
+  let s = sessions.get(key);
+  if (s) return s;
+  s = { raw: '', subs: new Set(), promise: null };
+  s.promise = (async () => {
     // §17 缓存是 { data, at } 包装（见 store.saveAnswerCache），必须解包 .data
     const cached = await store.getAnswerCache(articleId, concept);
     if (cached?.data) {
-      inflight.delete(key);
+      sessions.delete(key);
       return cached.data;
     }
     let data;
     try {
-      const res = await api.explain({
-        concept,
-        context: runtime.page?.context?.text || '',
-        articleId,
-      });
-      data = res || { is_concept: true, definition: `「${concept}」的解释暂时拿不到，可以先跳知乎搜索看看。`, in_context: '', prerequisites: [] };
+      if (STREAM_EXPLAIN) {
+        // 线上 SCF：流式接收，每个 delta 通过 onRaw 广播累计原文
+        data = await scfExplainStream(
+          { concept, context: runtime.page?.context?.text || '', articleId },
+          (raw) => {
+            s.raw = raw;
+            s.subs.forEach((fn) => { try { fn(raw); } catch { /* 渲染异常不中断接收 */ } });
+          },
+        );
+      } else {
+        const res = await api.explain({
+          concept,
+          context: runtime.page?.context?.text || '',
+          articleId,
+        });
+        data = res || fallbackExplain(concept);
+      }
     } catch {
-      data = { is_concept: true, definition: `「${concept}」的解释暂时拿不到，可以先跳知乎搜索看看。`, in_context: '', prerequisites: [] };
+      data = fallbackExplain(concept);
     }
     await store.saveAnswerCache(articleId, concept, data);
-    inflight.delete(key);
+    sessions.delete(key);
     return data;
   })();
-  inflight.set(key, p);
-  return p;
+  sessions.set(key, s);
+  return s;
+}
+
+export function loadExplanation(articleId, concept) {
+  return startSession(articleId, concept).promise;
 }
 
 export function prefetchExplain(articleId, concept) {
-  loadExplanation(articleId, concept).catch(() => {});
+  startSession(articleId, concept).promise.catch(() => {});
+}
+
+// 订阅流式累计原文：注册时立即回调当前已收到的内容，之后每个 delta 再回调。
+// 返回取消订阅函数。缓存命中 / 非流式模式下 raw 始终为空串。
+export function subscribeExplainRaw(articleId, concept, fn) {
+  const s = startSession(articleId, concept);
+  s.subs.add(fn);
+  if (s.raw) fn(s.raw);
+  return () => s.subs.delete(fn);
+}
+
+// 从流式累积的部分 JSON 文本中容错抽取已到达的字段（字符串值可能还没闭合）。
+// definition / context_why 是模板里最靠前的两个字段，用户最想立刻看到。
+function parsePartialExplain(raw) {
+  const grab = (field) => {
+    const m = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(raw);
+    if (!m) return '';
+    try { return JSON.parse(`"${m[1]}"`); } catch { return m[1]; }
+  };
+  return { definition: grab('definition'), in_context: grab('context_why') };
 }
 
 export function isPopupOpen() { return !!ctx; }
@@ -90,56 +138,62 @@ export function closePopup() {
   runtime.emit('popup:closed');
 }
 
-const TOPBAR_SAFE = 60; // 顶部吸顶栏安全边距（§15）
-
-export function openPopup({ concept, x, y, articleId }) {
+// 右下角常驻浮窗：不再跟随选区定位（滚动/翻页也不跑）；顶部头部栏含关闭按钮。
+export function openPopup({ concept, articleId }) {
   closePopup();
   const { host, root } = shadowRoot('div', CSS);
   document.getElementById('zb-popup-root').appendChild(host);
-  const pop = el('div', { class: 'zb-pop' }, [el('div', { class: 'zb-loading', text: '看山正眯着眼睛读这段……' })]);
+  const pop = el('div', { class: 'zb-pop' });
   root.appendChild(pop);
 
-  // 定位：超出底部自动翻转，视口内收敛（§15）
-  const place = () => {
-    pop.style.visibility = 'hidden';
-    pop.style.left = '0px';
-    pop.style.top = '0px';
-    const rect = pop.getBoundingClientRect();
-    let left = Math.min(Math.max(8, x - rect.width / 2), window.innerWidth - rect.width - 8);
-    let top = y + 12;
-    if (top + rect.height > window.innerHeight - 8) top = Math.max(TOPBAR_SAFE, y - rect.height - 12);
-    pop.style.left = `${Math.round(left)}px`;
-    pop.style.top = `${Math.round(top)}px`;
-    pop.style.visibility = 'visible';
-  };
-  requestAnimationFrame(place);
+  // 头部常驻：看山头像 + 标题 + 右上角关闭按钮
+  const head = el('div', { class: 'zb-head' }, [
+    el('img', { class: 'zb-fox', src: assetUrl('kanshan/idle.gif'), alt: '看山' }),
+    el('span', { class: 'zb-title', text: '知伴 · 在这篇里讲明白' }),
+    el('button', { class: 'zb-x', text: '×', onclick: () => { window.getSelection()?.removeAllRanges(); closePopup(); } }),
+  ]);
+  pop.appendChild(head);
 
-  const body = pop.querySelector('.zb-loading');
-  const renderHead = (label) => {
-    const head = el('div', { class: 'zb-head' }, [
-      el('img', { class: 'zb-fox', src: assetUrl('kanshan/idle.gif'), alt: '看山' }),
-      el('span', { class: 'zb-title', text: label }),
-      el('button', { class: 'zb-x', text: '×', onclick: () => { window.getSelection()?.removeAllRanges(); closePopup(); } }),
-    ]);
-    pop.insertBefore(head, pop.firstChild);
-    return head;
-  };
+  // 正文骨架：概念名 + 加载占位 + 两个流式字段（先占位隐藏，收到内容再点亮）
+  const loadingEl = el('div', { class: 'zb-loading', text: '看山正眯着眼睛读这段……' });
+  const defEl = el('div', { class: 'zb-def', style: 'display:none' });
+  const ctxEl = el('div', { class: 'zb-ctx', style: 'display:none' });
+  const bodyEl = el('div', { class: 'zb-body' }, [
+    el('div', { class: 'zb-concept', text: concept }),
+    loadingEl,
+    defEl,
+    ctxEl,
+  ]);
+  pop.appendChild(bodyEl);
 
   ctx = { host, close: closePopup };
 
+  // 流式渐进渲染（§一边接收一边显示）：每个 delta 到达就刷新对应字段。
+  // 预取在点击前已由 selection.js 发起——打开时多半已经在途，第一屏几乎零等待。
+  const unsub = subscribeExplainRaw(articleId, concept, (raw) => {
+    const part = parsePartialExplain(raw);
+    if (part.definition) {
+      loadingEl.style.display = 'none';
+      defEl.style.display = '';
+      defEl.textContent = part.definition;
+    }
+    if (part.in_context) {
+      ctxEl.style.display = '';
+      ctxEl.textContent = part.in_context;
+    }
+  });
+
   (async () => {
-    // 提问记录缓存 + 预取去重（§17；点击前 selection.js 已并行发起）
+    // 提问记录缓存 + 预取/流式去重（§17；点击前 selection.js 已并行发起）
     const data = await loadExplanation(articleId, concept);
+    unsub();
 
     if (!data.is_concept) {
-      renderHead('知伴');
-      body.replaceWith(el('div', { class: 'zb-body' }, [
-        el('div', { class: 'zb-hint', text: `「${concept}」看起来不是一个需要解释的概念。换一个专业名词试试？` }),
-      ]));
+      head.querySelector('.zb-title').textContent = '知伴';
+      bodyEl.replaceChildren(el('div', { class: 'zb-hint', text: `「${concept}」看起来不是一个需要解释的概念。换一个专业名词试试？` }));
       return;
     }
 
-    renderHead('知伴 · 在这篇里讲明白');
     // 概念记录持久化（§9.2）
     const existing = await store.getConceptRecord(concept);
     // 原文锚点（§Learning Hub）：记录所在段落索引 + 段内文本偏移，供 hub「回原文」定位高亮。
@@ -178,12 +232,16 @@ export function openPopup({ concept, x, y, articleId }) {
     // 短尾巴回访（§8 / 10.9）：选中旧概念且到回访时间 → 弹出回访卡片
     const revisit = await onRevisitCheck(record);
 
-    const bodyEl = el('div', { class: 'zb-body' }, [
-      el('div', { class: 'zb-concept', text: concept }),
-      el('div', { class: 'zb-def', text: data.definition }),
-      data.in_context ? el('div', { class: 'zb-ctx', text: data.in_context }) : null,
-    ]);
-    body.replaceWith(bodyEl);
+    // 最终渲染：文本与流式展示收敛一致（流式期间可能已经渲染过，这里是幂等覆盖）
+    loadingEl.remove();
+    defEl.style.display = '';
+    defEl.textContent = data.definition;
+    if (data.in_context) {
+      ctxEl.style.display = '';
+      ctxEl.textContent = data.in_context;
+    } else {
+      ctxEl.remove();
+    }
 
     // 前置知识（§四-2）：点开给一句话解释 + 站内高赞回答
     if ((data.prerequisites || []).length > 0) {
@@ -221,7 +279,6 @@ export function openPopup({ concept, x, y, articleId }) {
 
     bodyEl.appendChild(el('div', { class: 'zb-foot', text: '所有记录仅存于本浏览器，不上传服务器' }));
     await getGuideTrigger(articleId); // 本篇 ≥3 概念触发导读生成提醒
-    requestAnimationFrame(place);
   })();
 
   return ctx;

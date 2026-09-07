@@ -7,6 +7,9 @@ const SCF_BASE = 'https://1399201542-7y33vuteqi.ap-beijing.tencentscf.com';
 const IS_LOCAL = typeof location !== 'undefined' &&
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
+// 线上（SCF）支持流式解释；本地 dev server 走一次性 mock/LLM
+export const STREAM_EXPLAIN = !IS_LOCAL;
+
 async function post(path, body) {
   const res = await fetch((IS_LOCAL ? './' : SCF_BASE + '/') + path, {
     method: 'POST',
@@ -18,16 +21,69 @@ async function post(path, body) {
 }
 
 // SCF /ask → 前端 explain 结构：context_why 映射为 in_context
-async function scfExplain(payload) {
-  const r = await post('ask', { term: payload.concept, context: payload.context || '' });
+function normalizeAsk(r) {
   return {
-    is_concept: true,
+    is_concept: r.is_concept !== false,
     definition: r.definition || '',
     in_context: r.context_why || r.in_context || '',
     prerequisites: Array.isArray(r.prerequisites) ? r.prerequisites.slice(0, 2) : [],
     quiz_question: r.quiz_question || '',
     quiz_points: Array.isArray(r.quiz_points) ? r.quiz_points : [],
   };
+}
+
+async function scfExplain(payload) {
+  const r = await post('ask', { term: payload.concept, context: payload.context || '' });
+  return normalizeAsk(r);
+}
+
+// 流式解释（线上 SCF）：POST /ask {stream:true}，SSE 逐字接收。
+// onRaw(rawText) 每收到一个 content delta 回调一次（累计的模型原文 JSON 文本）。
+// 返回最终解析结果（与 scfExplain 同结构）。
+// 网关/平台缓冲整包时，响应不是 event-stream → 自动降级为一次性 JSON，行为同 scfExplain。
+export async function scfExplainStream(payload, onRaw) {
+  const res = await fetch(SCF_BASE + '/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ term: payload.concept, context: payload.context || '', stream: true }),
+  });
+  if (!res.ok) throw new Error(`api ${res.status}`);
+  const ct = res.headers.get('Content-Type') || '';
+  if (ct.indexOf('text/event-stream') < 0 || !res.body) {
+    // 平台不支持流式：整包 JSON 直接解析
+    const r = await res.json();
+    const data = normalizeAsk(r);
+    if (onRaw) onRaw(JSON.stringify(r));
+    return data;
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let rawAll = '';
+  let buf = '';
+  for (;;) {
+    const step = await reader.read();
+    if (step.done) break;
+    buf += dec.decode(step.value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      const t = line.trim();
+      if (t.indexOf('data:') !== 0) continue;
+      const data = t.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      let j = null;
+      try { j = JSON.parse(data); } catch { continue; } // 半个 chunk 的坏行直接跳过
+      if (j && j.error) throw new Error(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
+      const delta = j && j.choices && j.choices[0] &&
+        ((j.choices[0].delta && j.choices[0].delta.content) || j.choices[0].content);
+      if (delta) {
+        rawAll += delta;
+        if (onRaw) onRaw(rawAll);
+      }
+    }
+  }
+  // 模型原文应为 JSON；解析失败由调用方兜底（loadExplanation 有降级文案）
+  return normalizeAsk(JSON.parse(rawAll));
 }
 
 async function scfQuiz(payload) {

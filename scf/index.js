@@ -20,7 +20,7 @@ var https = require('https');
 
 // 大模型端点：智谱 GLM（OpenAI 兼容）
 var LLM_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
-var LLM_MODEL = 'glm-4.5-air';
+var LLM_MODEL = 'glm-5.3-flash';
 var ZHIHU_SEARCH_URL = 'https://developer.zhihu.com/api/v1/content/zhihu_search';
 
 var app = express();
@@ -120,8 +120,7 @@ function getApiKey() {
 }
 
 // 调 GLM，JSON 模式；返回解析后的对象，失败抛错（由路由层转 502）
-async function callLlm(prompt) {
-  var apiKey = getApiKey();
+async function callLlm(prompt) {  var apiKey = getApiKey();
   if (!apiKey) {
     var e = new Error('服务器未配置 ZHIPU_API_KEY');
     e.status = 500;
@@ -152,6 +151,63 @@ async function callLlm(prompt) {
   return JSON.parse(content); // 模型输出非合法 JSON 时抛错，由路由层转 500/502
 }
 
+// 调 GLM 流式模式（SSE），把上游 chunk 原样透传给 res，逐字到达前端。
+// 网关若缓冲整包，前端仍能按 SSE 解析（降级为一次性渲染），不会报错。
+// 返回 Promise：正常结束（收到 [DONE] / 上游 end）时 resolve；上游错误 reject。
+function streamLlm(prompt, res) {
+  return new Promise(function (resolve, reject) {
+    var apiKey = getApiKey();
+    if (!apiKey) {
+      var e0 = new Error('服务器未配置 ZHIPU_API_KEY');
+      e0.status = 500;
+      reject(e0);
+      return;
+    }
+    var payload = JSON.stringify({
+      model: LLM_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+      stream: true
+    });
+    var req = https.request({
+      hostname: 'open.bigmodel.cn',
+      path: '/api/paas/v4/chat/completions',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + apiKey,
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    }, function (up) {
+      if (up.statusCode < 200 || up.statusCode >= 300) {
+        var chunks = [];
+        up.on('data', function (c) { chunks.push(c); });
+        up.on('end', function () {
+          var e1 = new Error('大模型 API 返回 ' + up.statusCode + ': ' + Buffer.concat(chunks).toString('utf8').slice(0, 200));
+          e1.status = 502;
+          reject(e1);
+        });
+        return;
+      }
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Accel-Buffering', 'no'); // 尽力禁止各级代理缓冲
+      var done = false;
+      up.on('data', function (c) { if (!done) res.write(c); });
+      up.on('end', function () { if (!done) { done = true; res.end(); } resolve(); });
+      up.on('error', function (err) { if (!done) { done = true; res.end(); } reject(err); });
+    });
+    req.on('error', function (e) { reject(e); });
+    req.setTimeout(55000, function () {
+      req.destroy(new Error('upstream timeout after 55000ms'));
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
 function llmError(e) {
   var status = e && e.status ? e.status : 502;
   return { status: status, body: { error: String((e && e.message) || e).slice(0, 300) } };
@@ -169,6 +225,21 @@ app.post('/ask', async function (req, res) {
   var context = typeof body.context === 'string' ? body.context.trim() : '';
   if (!term || !context) {
     res.status(400).json({ error: 'term 和 context 均为必填字符串' });
+    return;
+  }
+  // 流式：body.stream=true 时透传 GLM SSE，前端边收边渲染
+  if (body.stream === true) {
+    try {
+      await streamLlm(buildPrompt(term, context), res);
+    } catch (e) {
+      if (!res.headersSent) {
+        var err = llmError(e);
+        res.status(err.status).json(err.body);
+      } else {
+        res.write('data: ' + JSON.stringify({ error: String((e && e.message) || e).slice(0, 300) }) + '\n\n');
+        res.end();
+      }
+    }
     return;
   }
   try {
