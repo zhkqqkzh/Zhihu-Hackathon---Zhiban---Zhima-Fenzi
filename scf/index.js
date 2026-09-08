@@ -20,7 +20,7 @@ var https = require('https');
 
 // 大模型端点：智谱 GLM（OpenAI 兼容）
 var LLM_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
-var LLM_MODEL = 'glm-5.3-flash';
+var LLM_MODEL = 'glm-4.7-flashx';
 var ZHIHU_SEARCH_URL = 'https://developer.zhihu.com/api/v1/content/zhihu_search';
 
 var app = express();
