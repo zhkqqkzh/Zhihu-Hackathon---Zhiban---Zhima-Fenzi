@@ -30,6 +30,29 @@ setStorageAdapter({
 window.__ZB_TRANSPORT__ = (path, payload) =>
   new Promise((resolve) => chrome.runtime.sendMessage({ type: 'zb-api', path, payload }, resolve));
 
+// 2b. 流式传输层：content → background → 后端，chunk 经端口实时回推（SSE 网络原文）。
+// resolve 完整网络原文（SSE 或整包 JSON，由调用方识别降级）；reject 携带错误信息。
+window.__ZB_TRANSPORT_STREAM__ = (path, payload, onChunk) => new Promise((resolve, reject) => {
+  const port = chrome.runtime.connect({ name: 'zb-api-stream' });
+  let text = '';
+  let settled = false;
+  const finish = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+  port.onMessage.addListener((msg) => {
+    if (msg.type === 'chunk') {
+      text += msg.text;
+      try { onChunk(msg.text); } catch (e) { port.disconnect(); finish(reject, e); }
+    } else if (msg.type === 'end') {
+      port.disconnect();
+      finish(resolve, text);
+    } else if (msg.type === 'error') {
+      port.disconnect();
+      finish(reject, new Error(msg.error || 'stream error'));
+    }
+  });
+  port.onDisconnect.addListener(() => finish(reject, new Error('stream channel closed')));
+  port.postMessage({ type: 'zb-api-stream-start', path, payload });
+});
+
 // 3. 资源基址（看山 GIF、兜底样式表）。注意构建产物在 dist/ 下，路径必须带 dist/ 前缀，
 // 否则 chrome-extension://<id>/assets/... 指向扩展根目录（实际文件在 dist/assets/），GIF 会 404。
 window.__ZB_ASSET_BASE__ = chrome.runtime.getURL('dist/assets/');

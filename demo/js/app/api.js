@@ -10,7 +10,17 @@ const IS_LOCAL = typeof location !== 'undefined' &&
 // 线上（SCF）支持流式解释；本地 dev server 走一次性 mock/LLM
 export const STREAM_EXPLAIN = !IS_LOCAL;
 
+// 插件环境（内容脚本）：页面 CSP 拦截直连 fetch，统一经 background 转发（§14.1）。
+// 适配层注入 window.__ZB_TRANSPORT__ / __ZB_TRANSPORT_STREAM__；demo 站无此定义，走直连。
+const hasTransport = typeof window !== 'undefined' &&
+  typeof window.__ZB_TRANSPORT__ === 'function';
+
 async function post(path, body) {
+  if (hasTransport) {
+    const r = await window.__ZB_TRANSPORT__(path, body || {});
+    if (r && typeof r.error === 'string') throw new Error(r.error);
+    return r;
+  }
   const res = await fetch((IS_LOCAL ? './' : SCF_BASE + '/') + path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -37,15 +47,64 @@ async function scfExplain(payload) {
   return normalizeAsk(r);
 }
 
+// SSE 增量解析器：feed 网络原文（可能是半个 chunk），逐行提取 choices[].delta.content。
+// 每拼出一个完整 delta 就 onRaw(累计模型原文)；遇 error 对象抛错。
+function makeSseParser(onRaw) {
+  let buf = '';
+  let rawAll = '';
+  const self = function feed(text) {
+    buf += text;
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    let deltaAll = '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (t.indexOf('data:') !== 0) continue;
+      const data = t.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      let j = null;
+      try { j = JSON.parse(data); } catch { continue; } // 半个 chunk 的坏行直接跳过
+      if (j && j.error) throw new Error(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
+      const delta = j && j.choices && j.choices[0] &&
+        ((j.choices[0].delta && j.choices[0].delta.content) || j.choices[0].content);
+      if (delta) deltaAll += delta;
+    }
+    if (deltaAll) {
+      rawAll += deltaAll;
+      if (onRaw) onRaw(rawAll);
+    }
+  };
+  self.raw = () => rawAll;
+  return self;
+}
+
 // 流式解释（线上 SCF）：POST /ask {stream:true}，SSE 逐字接收。
 // onRaw(rawText) 每收到一个 content delta 回调一次（累计的模型原文 JSON 文本）。
 // 返回最终解析结果（与 scfExplain 同结构）。
-// 网关/平台缓冲整包时，响应不是 event-stream → 自动降级为一次性 JSON，行为同 scfExplain。
+// 降级：插件经 background 转发（响应是普通 JSON 时按整包解析）；直连时按 Content-Type 判断。
 export async function scfExplainStream(payload, onRaw) {
+  const askBody = { term: payload.concept, context: payload.context || '', stream: true };
+
+  // 插件环境：content → background → SCF，chunk 经端口实时回推
+  if (typeof window !== 'undefined' && typeof window.__ZB_TRANSPORT_STREAM__ === 'function') {
+    const parser = makeSseParser(onRaw);
+    const netText = await window.__ZB_TRANSPORT_STREAM__('ask', askBody, (chunk) => parser(chunk));
+    const trimmed = netText.trim();
+    if (trimmed.charAt(0) === '{') {
+      // 函数/平台不支持流式：整包 JSON 直接解析
+      const r = JSON.parse(trimmed);
+      const data = normalizeAsk(r);
+      if (onRaw) onRaw(JSON.stringify(r));
+      return data;
+    }
+    // 模型原文应为 JSON；解析失败由调用方兜底（loadExplanation 有降级文案）
+    return normalizeAsk(JSON.parse(parser.raw()));
+  }
+
   const res = await fetch(SCF_BASE + '/ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ term: payload.concept, context: payload.context || '', stream: true }),
+    body: JSON.stringify(askBody),
   });
   if (!res.ok) throw new Error(`api ${res.status}`);
   const ct = res.headers.get('Content-Type') || '';
@@ -59,28 +118,11 @@ export async function scfExplainStream(payload, onRaw) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let rawAll = '';
-  let buf = '';
+  const parser = makeSseParser((raw) => { rawAll = raw; if (onRaw) onRaw(raw); });
   for (;;) {
     const step = await reader.read();
     if (step.done) break;
-    buf += dec.decode(step.value, { stream: true });
-    const lines = buf.split('\n');
-    buf = lines.pop();
-    for (const line of lines) {
-      const t = line.trim();
-      if (t.indexOf('data:') !== 0) continue;
-      const data = t.slice(5).trim();
-      if (!data || data === '[DONE]') continue;
-      let j = null;
-      try { j = JSON.parse(data); } catch { continue; } // 半个 chunk 的坏行直接跳过
-      if (j && j.error) throw new Error(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
-      const delta = j && j.choices && j.choices[0] &&
-        ((j.choices[0].delta && j.choices[0].delta.content) || j.choices[0].content);
-      if (delta) {
-        rawAll += delta;
-        if (onRaw) onRaw(rawAll);
-      }
-    }
+    parser(dec.decode(step.value, { stream: true }));
   }
   // 模型原文应为 JSON；解析失败由调用方兜底（loadExplanation 有降级文案）
   return normalizeAsk(JSON.parse(rawAll));

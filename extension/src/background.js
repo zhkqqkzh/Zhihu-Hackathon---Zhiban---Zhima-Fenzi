@@ -18,3 +18,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     .catch((e) => sendResponse({ error: String(e?.message || e).slice(0, 200) }));
   return true; // 异步响应
 });
+
+// 流式转发（SSE）：content script 建端口，background 用 reader 逐 chunk 推送网络原文。
+// 函数/平台不支持流式时响应是普通 JSON——照样以单个 chunk 转发，由前端识别降级。
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'zb-api-stream') return;
+  let reader = null;
+  port.onMessage.addListener((msg) => {
+    if (msg?.type !== 'zb-api-stream-start' || typeof msg.path !== 'string') return;
+    const url = /^https?:\/\//.test(msg.path) ? msg.path : API_BASE + msg.path;
+    (async () => {
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(msg.payload || {}),
+        });
+        if (!r.ok || !r.body) {
+          port.postMessage({ type: 'error', error: `api ${r.status}` });
+          return;
+        }
+        reader = r.body.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          port.postMessage({ type: 'chunk', text: dec.decode(value, { stream: true }) });
+        }
+        port.postMessage({ type: 'end' });
+      } catch (e) {
+        port.postMessage({ type: 'error', error: String(e?.message || e).slice(0, 200) });
+      }
+    })();
+  });
+  // 页面关掉浮层/跳转时端口断开，取消上游读取
+  port.onDisconnect.addListener(() => { try { reader?.cancel(); } catch { /* 已断开 */ } });
+});
