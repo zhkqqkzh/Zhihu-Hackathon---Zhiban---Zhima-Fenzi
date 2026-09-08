@@ -6,7 +6,8 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://www.zhihu.com/*",
-    "https://zhuanlan.zhihu.com/*"
+    "https://zhuanlan.zhihu.com/*",
+    "https://*.tencentscf.com/*"
   ],
   "background": {
     "service_worker": "dist/background.js"

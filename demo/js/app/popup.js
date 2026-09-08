@@ -90,7 +90,9 @@ function startSession(articleId, concept) {
         });
         data = res || fallbackExplain(concept);
       }
-    } catch {
+    } catch (e) {
+      // 出错时打日志便于排查（F12 → Console），用户侧仍给兜底文案（§13.4）
+      console.error('[知伴] 解释获取失败:', e);
       data = fallbackExplain(concept);
     }
     await store.saveAnswerCache(articleId, concept, data);
