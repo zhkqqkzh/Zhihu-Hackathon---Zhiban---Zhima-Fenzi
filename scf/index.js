@@ -38,20 +38,13 @@ app.use(function (req, res, next) {
   next();
 });
 
-// ---- Prompt 模板（/ask 用，逐字固定，只填入 term/context）----
+// ---- Prompt 模板（/ask 用）：精简指令 → 更少的输出 token、更快的首字延迟 ----
+// 流式场景下模型边生成前端边显示，指令越短生成越快；质量约束保留最关键的三条。
 function buildPrompt(term, context) {
-  return '下面是知乎一篇回答的片段：\n' +
-    context + '\n' +
-    '用户选中了「' + term + '」。请输出 JSON，包含三个字段：\n' +
-    'definition：一句话定义，不超过 40 字\n' +
-    'context_why：这个概念在上述片段里扮演什么角色、作者为什么提到它，不超过 60 字，必须紧扣片段具体内容\n' +
-    'prerequisites：理解它需要先掌握的概念名数组，最多 2 个。\n' +
-    '判定标准：只输出「不懂它就完全无法理解当前概念」的那些概念。\n' +
-    '「懂了更好、不懂也能凑合」的不算，「同一领域的邻近概念」也不算。\n' +
-    '想不出就给 1 个。宁可只给 1 个真正必要的，也不要给 2 个沾边的。\n' +
-    '确实毫无前置的可以返回空数组，但绝大多数专业概念至少有一个前置。\n' +
-    '禁止写"数学""物理""基础"这类过宽的词，要输出具体概念名。\n' +
-    '只输出 JSON，不要任何额外文字。';
+  return '知乎回答片段：' + context + '\n' +
+    '用户选中「' + term + '」。直接输出 JSON（不要思考过程、不要 markdown 代码块）：\n' +
+    '{"definition":"一句话定义，≤40字","context_why":"它在这段话里的作用，作者为何提到，≤60字，紧扣片段","prerequisites":["最多2个"]}\n' +
+    'prerequisites 只填「不懂它就完全无法理解」的概念；想不出给 1 个；禁写"数学""物理"这类过宽词。';
 }
 
 // 预扫描 Prompt（§10.5：概念名必须逐字照抄正文，否则变成幽灵标记）
@@ -132,6 +125,7 @@ async function callLlm(prompt) {  var apiKey = getApiKey();
       model: LLM_MODEL,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
+      max_tokens: 400, // 三层解释JSON极短，封顶避免模型啰嗦拖慢
       response_format: { type: 'json_object' }
     },
     55000);
@@ -167,6 +161,7 @@ function streamLlm(prompt, res) {
       model: LLM_MODEL,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
+      max_tokens: 400, // 三层解释JSON极短，封顶避免模型啰嗦拖慢
       response_format: { type: 'json_object' },
       stream: true
     });
@@ -222,7 +217,8 @@ app.get('/ping', function (req, res) {
 app.post('/ask', async function (req, res) {
   var body = req.body || {};
   var term = typeof body.term === 'string' ? body.term.trim() : '';
-  var context = typeof body.context === 'string' ? body.context.trim() : '';
+  // 预填加速：只送概念所在段落附近的 600 字，足够判断语境，显著减少 prefill 耗时
+  var context = typeof body.context === 'string' ? body.context.trim().slice(0, 600) : '';
   if (!term || !context) {
     res.status(400).json({ error: 'term 和 context 均为必填字符串' });
     return;
