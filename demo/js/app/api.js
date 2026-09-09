@@ -49,7 +49,8 @@ async function scfExplain(payload) {
 
 // SSE 增量解析器：feed 网络原文（可能是半个 chunk），逐行提取 choices[].delta.content。
 // 每拼出一个完整 delta 就 onRaw(累计模型原文)；遇 error 对象抛错。
-function makeSseParser(onRaw) {
+// 部分模型（如 glm-4.7-flashx）会先吐 reasoning_content 思考链：不计入原文，仅经 onThinking 通知。
+function makeSseParser(onRaw, onThinking) {
   let buf = '';
   let rawAll = '';
   const self = function feed(text) {
@@ -65,8 +66,9 @@ function makeSseParser(onRaw) {
       let j = null;
       try { j = JSON.parse(data); } catch { continue; } // 半个 chunk 的坏行直接跳过
       if (j && j.error) throw new Error(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
-      const delta = j && j.choices && j.choices[0] &&
-        ((j.choices[0].delta && j.choices[0].delta.content) || j.choices[0].content);
+      const d = j && j.choices && j.choices[0] && j.choices[0].delta;
+      if (d && d.reasoning_content && onThinking) onThinking(d.reasoning_content);
+      const delta = (d && d.content) || (j && j.choices && j.choices[0] && j.choices[0].content);
       if (delta) deltaAll += delta;
     }
     if (deltaAll) {
@@ -82,12 +84,12 @@ function makeSseParser(onRaw) {
 // onRaw(rawText) 每收到一个 content delta 回调一次（累计的模型原文 JSON 文本）。
 // 返回最终解析结果（与 scfExplain 同结构）。
 // 降级：插件经 background 转发（响应是普通 JSON 时按整包解析）；直连时按 Content-Type 判断。
-export async function scfExplainStream(payload, onRaw) {
+export async function scfExplainStream(payload, onRaw, onThinking) {
   const askBody = { term: payload.concept, context: payload.context || '', stream: true };
 
   // 插件环境：content → background → SCF，chunk 经端口实时回推
   if (typeof window !== 'undefined' && typeof window.__ZB_TRANSPORT_STREAM__ === 'function') {
-    const parser = makeSseParser(onRaw);
+    const parser = makeSseParser(onRaw, onThinking);
     const netText = await window.__ZB_TRANSPORT_STREAM__('ask', askBody, (chunk) => parser(chunk));
     const trimmed = netText.trim();
     if (trimmed.charAt(0) === '{') {
@@ -97,8 +99,9 @@ export async function scfExplainStream(payload, onRaw) {
       if (onRaw) onRaw(JSON.stringify(r));
       return data;
     }
-    // 模型原文应为 JSON；解析失败由调用方兜底（loadExplanation 有降级文案）
-    return normalizeAsk(JSON.parse(parser.raw()));
+    const raw = parser.raw();
+    if (!raw) throw new Error('模型只返回了思考过程，没有输出解释内容');
+    return normalizeAsk(JSON.parse(raw));
   }
 
   const res = await fetch(SCF_BASE + '/ask', {
@@ -118,13 +121,13 @@ export async function scfExplainStream(payload, onRaw) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let rawAll = '';
-  const parser = makeSseParser((raw) => { rawAll = raw; if (onRaw) onRaw(raw); });
+  const parser = makeSseParser((raw) => { rawAll = raw; if (onRaw) onRaw(raw); }, onThinking);
   for (;;) {
     const step = await reader.read();
     if (step.done) break;
     parser(dec.decode(step.value, { stream: true }));
   }
-  // 模型原文应为 JSON；解析失败由调用方兜底（loadExplanation 有降级文案）
+  if (!rawAll) throw new Error('模型只返回了思考过程，没有输出解释内容');
   return normalizeAsk(JSON.parse(rawAll));
 }
 

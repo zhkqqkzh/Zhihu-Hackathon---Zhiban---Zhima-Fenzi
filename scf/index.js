@@ -126,6 +126,7 @@ async function callLlm(prompt) {  var apiKey = getApiKey();
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       max_tokens: 400, // 三层解释JSON极短，封顶避免模型啰嗦拖慢
+      thinking: { type: 'disabled' }, // glm-4.7-flashx 默认吐 reasoning_content 思考链，关掉提速
       response_format: { type: 'json_object' }
     },
     55000);
@@ -162,6 +163,7 @@ function streamLlm(prompt, res) {
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       max_tokens: 400, // 三层解释JSON极短，封顶避免模型啰嗦拖慢
+      thinking: { type: 'disabled' }, // glm-4.7-flashx 默认吐 reasoning_content 思考链，关掉提速
       response_format: { type: 'json_object' },
       stream: true
     });
