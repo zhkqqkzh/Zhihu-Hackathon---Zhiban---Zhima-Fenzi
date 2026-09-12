@@ -45,6 +45,8 @@ const wrapped = normalizeExplain({ answer: { definition: '  多包一层  ', con
 eq(wrapped.definition, '多包一层', 'explain 解包 answer 并 trim definition');
 eq(wrapped.in_context, '包装层', 'explain 包装层 context_why 映射');
 eq(normalizeExplain({ answer: { is_concept: false } }).is_concept, false, 'explain 包装层 is_concept=false 可透出');
+eq(normalizeExplain({ is_concept: false }).is_concept, false, 'explain 平铺 is_concept=false 可透出（P0-2 后端短路返回体）');
+eq(normalizeExplain({ is_concept: false, definition: '' }).definition, '', 'explain 非概念不带 definition');
 eq(normalizeExplain({ definition: { text: 'x' } }).definition, '', 'explain definition 非字符串不取用');
 eq(normalizeExplain({}).is_concept, true, 'explain 缺字段默认是概念');
 eq(unwrapExplain(null).definition, undefined, 'unwrapExplain null 安全');
