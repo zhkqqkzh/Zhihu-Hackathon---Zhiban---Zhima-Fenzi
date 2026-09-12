@@ -6,3 +6,5 @@ scf/node_modules/
 .DS_Store
 .e2e/
 .workbuddy/
+.trae/
+api key.md
