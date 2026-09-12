@@ -9,26 +9,46 @@ import { el, toast } from './ui.js';
 import * as store from './store.js';
 import { api, zhihuSearchUrl } from './api.js';
 import { buildEdges, detectGap } from '../core/graph.js';
+import { expandToSentence } from '../core/quote.js';
+import { DEMO_SELECTORS } from '../core/selectors.js';
 import { ARTICLE_BY_ID } from '../data/articles.js';
 import { navigate } from './router.js';
 import { saveNote, exportNote } from './notes.js';
 
 const TRIGGER_COUNT = 3;
 
-// 生成并保存导读；返回 guide 对象
-export async function buildGuide(articleId) {
+// 卡点概念可能没有概念记录（读者只标了「卡住」、没展开）：从原文里取出它所在的那一段话当引用，
+// 定义留空由答主补——「前置说明草稿」的价值就在于让答主把这一句写出来。
+function paragraphTexts(articleBody) {
+  const box = el('div', { html: articleBody || '' });
+  return [...box.querySelectorAll(DEMO_SELECTORS.paragraph)].map((p) => p.textContent.trim());
+}
+
+// 生成并保存导读；conceptNames 省略时取本篇已展开概念。
+// 答主视角（§4.4）传入卡点 TOP3：{ concept, paragraphIndex } 或纯概念名都接受。
+export async function buildGuide(articleId, conceptNames = null) {
   const art = await store.getArticleRecord(articleId);
-  if (!art || art.expandedConcepts.length === 0) return null;
+  const names = conceptNames || art?.expandedConcepts || [];
+  if (names.length === 0) return null;
   const concepts = await store.listConcepts();
   const whitelist = await store.allPrescanConceptNames();
   const edges = buildEdges(concepts, whitelist);
   const gap = detectGap(concepts, edges);
 
+  const article = ARTICLE_BY_ID.get(articleId);
+  const paragraphs = article ? paragraphTexts(article.body) : [];
   const items = [];
-  for (const name of art.expandedConcepts) {
+  for (const entry of names) {
+    const name = typeof entry === 'string' ? entry : entry?.concept;
+    if (!name) continue;
     const rec = await store.getConceptRecord(name);
-    if (!rec) continue;
-    let link = rec.links?.[0]?.url || '';
+    let quote = rec?.quote || '';
+    if (!quote) {
+      const idx = typeof entry === 'object' && entry ? entry.paragraphIndex : null;
+      const para = idx != null && paragraphs[idx] ? paragraphs[idx] : paragraphs.find((t) => t.includes(name));
+      if (para) quote = expandToSentence(para, para.indexOf(name), para.indexOf(name) + name.length);
+    }
+    let link = rec?.links?.[0]?.url || '';
     if (!link) {
       const cached = await store.getLinkCache(name);
       const searchRes = cached?.items?.length
@@ -38,14 +58,14 @@ export async function buildGuide(articleId) {
         title: it.title, author: it.author, voteupCount: it.voteupCount,
         url: it.url || zhihuSearchUrl(name),
       }));
-      await store.saveLinkCache(name, { items: items2, oneLiner: rec.definition });
+      await store.saveLinkCache(name, { items: items2, oneLiner: rec?.definition || '' });
       link = items2[0]?.url || zhihuSearchUrl(name);
     }
-    items.push({ name, definition: rec.definition, quote: rec.quote, link });
+    items.push({ name, definition: rec?.definition || '', quote, link });
   }
   const guide = {
     articleId,
-    title: ARTICLE_BY_ID.get(articleId)?.title || art.title || '',
+    title: article?.title || art?.title || '',
     items,
     gap,
     createdAt: Date.now(),
@@ -84,7 +104,9 @@ export async function renderGuide(app, articleId) {
 
   const listBox = el('div', {});
   for (const item of guide.items) {
-    const ta = el('textarea', { class: 'guide-ta', rows: '3', text: `① ${item.name} —— ${item.definition}\n　原文里这句：「${item.quote}」` });
+    // 空定义是答主视角的草稿（§4.4）：留一句提示，让答主自己补上读者卡住的那一句。
+    const def = item.definition || '（读者常在这里卡住，补一句你的解释）';
+    const ta = el('textarea', { class: 'guide-ta', rows: '3', text: `① ${item.name} —— ${def}\n　原文里这句：「${item.quote}」` });
     listBox.appendChild(el('div', { class: 'GuideItem' }, [
       el('div', { class: 'gi-head', text: item.name }),
       ta,

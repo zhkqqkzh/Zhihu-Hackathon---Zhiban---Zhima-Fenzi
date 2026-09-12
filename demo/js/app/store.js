@@ -13,6 +13,7 @@ const GUIDE_KEY = (id) => `${PREFIX}guide:${id}`;
 const META_KEY = `${PREFIX}meta`;
 const LINK_CACHE_KEY = (name) => `${PREFIX}links:${name}`;
 const NOTE_KEY = (id) => `${PREFIX}note:${id}`;
+const STUCK_KEY = (id) => `${PREFIX}stuck:${id}`;
 
 // 浏览器适配：localStorage 包成异步接口（demo 环境）
 function createLocalStorageAdapter() {
@@ -167,6 +168,22 @@ export async function listNotes() {
   return out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 export async function deleteNote(id) { await storage.remove(NOTE_KEY(id)); }
+
+// ---- 卡点上报（改造方案 §4.2 / §4.5）----
+// 只记「本浏览器现场上报过的词」，与 core/stuck.js 的 seed 在读取时叠加。
+// 同一篇同一个词只存一条（点第二次不重复计数），避免刷量。
+export async function getStuckMarks(articleId) {
+  return (await storage.get(STUCK_KEY(articleId)))?.marks || [];
+}
+export async function addStuckMark(articleId, mark) {
+  const cur = await getStuckMarks(articleId);
+  const marks = [
+    ...cur.filter((m) => m.concept !== mark.concept),
+    { concept: mark.concept, paragraphIndex: mark.paragraphIndex ?? null, startOffset: mark.startOffset || 0, endOffset: mark.endOffset || 0, at: Date.now() },
+  ];
+  await storage.set(STUCK_KEY(articleId), { articleId, marks, at: Date.now() });
+  return marks;
+}
 
 // ---- 元信息：首访引导 / 复盘时间等 ----
 export async function getMeta() { return (await storage.get(META_KEY)) || {}; }

@@ -1,6 +1,8 @@
 // 前端 API 层：本地开发走同源 dev server（四接口 + mock），线上走 SCF（跨域，CORS 已放行）。
 // 失败降级绝不抛给用户；§13.3 知乎摘要白名单清洗；§13.4 查询参数编码且非空。
 
+import { normalizeExplain } from '../core/explain.js';
+
 // ⚠️ 换部署环境时只改这一个常量
 const SCF_BASE = 'https://1399201542-7y33vuteqi.ap-beijing.tencentscf.com';
 
@@ -30,18 +32,8 @@ async function post(path, body) {
   return await res.json();
 }
 
-// SCF /ask → 前端 explain 结构：context_why 映射为 in_context
-function normalizeAsk(r) {
-  return {
-    is_concept: r.is_concept !== false,
-    // 只认字符串：模型偶尔把 definition 写成对象/数组，直接取用会在浮层里渲染出 [object Object]
-    definition: typeof r.definition === 'string' ? r.definition.trim() : '',
-    in_context: r.context_why || r.in_context || '',
-    prerequisites: Array.isArray(r.prerequisites) ? r.prerequisites.slice(0, 2) : [],
-    quiz_question: r.quiz_question || '',
-    quiz_points: Array.isArray(r.quiz_points) ? r.quiz_points : [],
-  };
-}
+// SCF /ask → 前端 explain 结构（含 answer 多包一层时的解包）：纯函数见 core/explain.js
+const normalizeAsk = normalizeExplain;
 
 async function scfExplain(payload) {
   const r = await post('ask', { term: payload.concept, context: payload.context || '' });
@@ -156,6 +148,20 @@ export const api = {
   // 本地 dev server 也没有对应 mock，所以不做 IS_LOCAL 分支，统一走 SCF。
   analyzeCollections: (p) => post('collections', p),
 };
+
+// 冷启动预热（改造方案 §五-2）：线上 SCF 首个请求实测 26.8 秒，页面加载时空打一次
+// GET /ping 把函数实例热起来，用户真正划词时就不必再等冷启动。
+// 只做一次；本地 dev server 常驻、插件环境由宿主页面预热，都不需要。
+// 返回原因字符串便于断言与排查；失败静默——预热只是优化，不影响任何主流程。
+let warmed = false;
+export function warmup() {
+  if (warmed) return 'already';
+  if (IS_LOCAL) return 'skipped-local';
+  if (hasTransport) return 'skipped-injected';
+  warmed = true;
+  fetch(SCF_BASE + '/ping').catch(() => {});
+  return 'warming';
+}
 
 // 线上模式追问问题懒加载：本地由 explain 返回，线上调 /quiz 生成
 export async function ensureQuizQuestion(record) {

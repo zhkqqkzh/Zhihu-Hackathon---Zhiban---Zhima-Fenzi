@@ -1,5 +1,8 @@
 // 核心模块单元自测（纯函数部分）：match / quote / srs / graph / difficulty / stopwords
 import { matchConcepts, matchRate } from '../demo/js/core/match.js';
+import { unwrapExplain, normalizeExplain } from '../demo/js/core/explain.js';
+import { cleanPrescanConcepts } from '../demo/js/core/prescan.js';
+import { ARTICLES } from '../demo/js/data/articles.js';
 import { expandToSentence } from '../demo/js/core/quote.js';
 import { createReviewState, applyFeedback, isDue, nextIntervalDays } from '../demo/js/core/srs.js';
 import { buildEdges, topoOrder, detectGap, clusterArticles, sortClusterForCuration } from '../demo/js/core/graph.js';
@@ -7,6 +10,7 @@ import { previewDifficulty, difficultyMessage } from '../demo/js/core/difficulty
 import { interceptSelection } from '../demo/js/core/stopwords.js';
 import { isReviewDue, pickTopGaps, buildWeeklyReview, REVIEW_INTERVAL_DAYS } from '../demo/js/core/review.js';
 import { safeFileName, noteToMarkdown, formatTime } from '../demo/js/core/note.js';
+import { mergeStuck, stuckCount, hasStuckMark, stuckSourceLabel, topStuckInsight, buildCreatorReport, articleIdFromLink, formatCount } from '../demo/js/core/stuck.js';
 
 let pass = 0, fail = 0;
 function eq(actual, expected, label) {
@@ -31,6 +35,40 @@ eq(rate.total, 3, 'matchRate total');
 eq(rate.matched, 2, 'matchRate matched');
 ok(Math.abs(rate.rate - 2 / 3) < 1e-9, 'matchRate rate=2/3');
 eq(rate.missing, ['反向传播'], 'matchRate missing 幽灵标记可检出');
+
+// --- explain：结构漂移解包（P0-1）---
+const flat = normalizeExplain({ definition: '梯度是方向导数', context_why: '这里指下降方向', prerequisites: ['导数', '偏导', '多余'] });
+eq(flat.definition, '梯度是方向导数', 'explain 平铺取 definition');
+eq(flat.in_context, '这里指下降方向', 'explain context_why 映射为 in_context');
+eq(flat.prerequisites.length, 2, 'explain prerequisites 最多取 2 个');
+const wrapped = normalizeExplain({ answer: { definition: '  多包一层  ', context_why: '包装层' } });
+eq(wrapped.definition, '多包一层', 'explain 解包 answer 并 trim definition');
+eq(wrapped.in_context, '包装层', 'explain 包装层 context_why 映射');
+eq(normalizeExplain({ answer: { is_concept: false } }).is_concept, false, 'explain 包装层 is_concept=false 可透出');
+eq(normalizeExplain({ definition: { text: 'x' } }).definition, '', 'explain definition 非字符串不取用');
+eq(normalizeExplain({}).is_concept, true, 'explain 缺字段默认是概念');
+eq(unwrapExplain(null).definition, undefined, 'unwrapExplain null 安全');
+
+// --- prescan 词表清洗：幽灵标记 + 高频通用词（P1-1 / P1-2）---
+const gd = ARTICLES.find((a) => a.id === 'article-gradient-descent');
+const cleanedGd = cleanPrescanConcepts(gd.body, ['梯度下降', '局部最优', '函数', '参数', '损失']);
+eq(cleanedGd.concepts, ['梯度下降'], 'prescan 清洗后只留真概念，原顺序不变');
+eq(cleanedGd.dropped.ghost, ['局部最优'], 'prescan 幽灵标记被丢弃（正文实为「局部的浅坑」）');
+eq(cleanedGd.dropped.generic, ['函数', '参数', '损失'], 'prescan 高频通用词被丢弃');
+const bpArticle = ARTICLES.find((a) => a.id === 'article-backprop');
+const cleanedBp = cleanPrescanConcepts(bpArticle.body, ['反向传播', '搜索问题', '参数', '链式法则']);
+eq(cleanedBp.concepts, ['反向传播', '链式法则'], 'prescan 通用词剔除后保留全部真概念');
+eq(cleanedBp.dropped.generic, ['搜索问题', '参数'], 'prescan「搜索问题」「参数」被通用词清单拦截');
+const dv = ARTICLES.find((a) => a.id === 'article-derivative');
+const cleanedDv = cleanPrescanConcepts(dv.body, ['导数', '极限', '切线', '偏导数', '梯度', '梯度下降', '函数']);
+eq(cleanedDv.concepts, ['导数', '极限', '切线', '偏导数', '梯度', '梯度下降'], 'prescan 主概念（导数 15 次）不被频次阈值误杀');
+eq(cleanPrescanConcepts('甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲，甲甲', ['甲甲']).dropped.frequent, ['甲甲'], 'prescan 出现 17 次触发频次兜底');
+eq(cleanPrescanConcepts(gd.body, [' 梯度下降 ', '梯度下降', '']).concepts, ['梯度下降'], 'prescan 去空去重');
+eq(cleanPrescanConcepts('', ['梯度下降']).concepts, [], 'prescan 空正文返回空词表');
+for (const a of ARTICLES) {
+  const c = cleanPrescanConcepts(a.body, ['反向传播', '链式法则', '梯度下降', '导数', '函数', '局部最优']);
+  eq(matchRate(a.body, c.concepts).rate, 1, `prescan ${a.id} 清洗后丢失率为 0%`);
+}
 
 // --- quote：扩句 ---
 const para = '在机器学习中，梯度下降是一种迭代优化算法。它沿着负梯度方向更新参数。这就是全部。';
@@ -150,6 +188,66 @@ const gNote = noteToMarkdown({
 });
 ok(gNote.includes('## 1. 梯度'), '导读笔记分节渲染每个概念');
 ok(gNote.includes('你可能还缺、但没问到的一环：偏导数'), '导读笔记带缺口提醒');
+
+// --- stuck：卡点聚合（改造方案 §4.2/4.3/4.4，seed + 现场上报叠加）---
+const bpStuckArticle = ARTICLES.find((a) => a.id === 'article-backprop');
+eq(mergeStuck('article-backprop', [], 3).map((s) => s.concept), ['链式法则', '损失函数', '梯度下降'],
+  '卡点：无上报时按 seed 人数降序取 TOP3');
+eq(mergeStuck('article-backprop', [], 3)[0].count, 1283, '卡点：seed 人数原样保留');
+eq(stuckCount('article-backprop', '链式法则', []), 1283, '卡点：人数 = seed');
+eq(stuckCount('article-backprop', '链式法则', [{ concept: '链式法则', paragraphIndex: 1 }]), 1284,
+  '卡点：现场上报在同一词上 +1');
+eq(stuckCount('article-backprop', '偏导数', []), 388, '卡点：seed 覆盖第四名也参与人数统计');
+const mergedLocal = mergeStuck('article-backprop', [{ concept: '过拟合', paragraphIndex: 11, startOffset: 4, endOffset: 7 }]);
+const localItem = mergedLocal.find((s) => s.concept === '过拟合');
+eq(localItem.count, 1, '卡点：只有现场上报的新词也进列表，计数从 1 起');
+eq(mergedLocal[mergedLocal.length - 1].concept, '过拟合', '卡点：上报 1 次的新词排在末尾');
+eq(localItem.paragraphIndex, 11, '卡点：新词带上报时的真实段落，可跳回原文');
+eq(localItem.seedCount, 0, '卡点：新词标记为纯上报（seed 计 0）');
+const mergedAnchor = mergeStuck('article-backprop', [{ concept: '链式法则', paragraphIndex: 7, startOffset: 2, endOffset: 6 }], 1)[0];
+eq(mergedAnchor.paragraphIndex, 7, '卡点：真实上报的锚点优先于 seed 段落索引');
+eq(mergedAnchor.localCount, 1, '卡点：区分 seed 人数与上报人数');
+eq(hasStuckMark([{ concept: '链式法则' }], '链式法则'), true, '卡点：已上报判定');
+eq(hasStuckMark([{ concept: '链式法则' }], '损失函数'), false, '卡点：未上报判定');
+eq(mergeStuck('article-unknown', [], 3), [], '卡点：没有数据的文章返回空，不硬凑');
+
+const insight = topStuckInsight('article-backprop', bpStuckArticle, []);
+eq(insight.concept, '链式法则', '首页洞察：取人数最多的词');
+eq(insight.count, 1283, '首页洞察：人数取 seed/上报叠加值');
+eq(insight.paragraph, 2, '首页洞察：段号从 1 起');
+eq(insight.voteupCount, 8432, '首页洞察：赞数取自真实文章数据');
+eq(insight.totalStuck, 1283 + 964 + 712 + 388, '首页洞察：本篇卡点总数为 seed 全部词之和');
+eq(insight.share, 38, '首页洞察：第一大卡点占比（1283/3347），「卡在同一个词」有数字兜底');
+eq(stuckSourceLabel(insight), '演示环境数据', '首页洞察：来源字段随洞察一起返回，界面可直接标注（§七-6）');
+eq(topStuckInsight('article-unknown', null, []), null, '首页洞察：无数据返回 null');
+
+const report = buildCreatorReport('article-backprop', bpStuckArticle, [], 3);
+eq(report.items.length, 3, '答主报告：默认 TOP3');
+eq(report.totalStuck, 1283 + 964 + 712 + 388, '答主报告：本篇全部卡点（含未进 TOP3 的第四名）');
+eq(report.topStuck, 1283 + 964 + 712, '答主报告：展示的三处合计与全部分开（界面数字可追溯 §七-6）');
+eq(report.items[0].share, 38, '答主报告：占比分母为全部卡点');
+eq(report.hasData, true, '答主报告：有数据');
+eq(report.author, '陈默', '答主报告：带上作者');
+eq(buildCreatorReport('article-unknown', null, [], 3).hasData, false, '答主报告：无数据时如实标注');
+eq(buildCreatorReport('article-backprop', bpStuckArticle, [{ concept: '链式法则', paragraphIndex: 1 }], 3).items[0].count, 1284,
+  '答主报告：现场上报叠加进报告');
+
+eq(articleIdFromLink('#/article/article-backprop'), 'article-backprop', '卡点：解析站内文章链接');
+eq(articleIdFromLink('https://www.zhihu.com/question/123/answer/3489210567'), 'article-backprop',
+  '卡点：解析知乎回答链接');
+eq(articleIdFromLink('https://www.zhihu.com/question/123/answer/9999999999'), '', '卡点：未收录的回答返回空');
+eq(articleIdFromLink('随便写点什么'), '', '卡点：非法输入返回空');
+
+eq(formatCount(1283), '1,283', '卡点：人数千分位展示');
+eq(formatCount(712), '712', '卡点：四位数以下不加分隔符');
+eq(formatCount(undefined), '0', '卡点：人数缺失显示 0');
+
+eq(stuckSourceLabel({ seedCount: 1283, localCount: 0 }), '演示环境数据', '卡点：纯 seed 如实标注「演示环境数据」');
+eq(stuckSourceLabel({ seedCount: 0, localCount: 1 }), '你的上报', '卡点：纯现场上报标注「你的上报」');
+eq(stuckSourceLabel({ seedCount: 964, localCount: 1 }), '演示环境数据 + 你的上报',
+  '卡点：两类叠加同时标出，不把演示数据冒充成真实统计（验收 §七-6）');
+eq(stuckSourceLabel(mergeStuck('article-backprop', [{ concept: '过拟合' }], 9).find((s) => s.concept === '过拟合')),
+  '你的上报', '卡点：聚合结果直接可判来源');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

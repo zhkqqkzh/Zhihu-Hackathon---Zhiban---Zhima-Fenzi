@@ -1,12 +1,15 @@
-# 知伴 · 读不懂，划一下，当场讲明白
+# 知伴 · 你卡住的地方，也是所有人的卡点
 
 > 知乎黑客松 2026 · 校园新锐季 —— 知识炼金场赛道
 >
 > 读知乎遇到不懂的概念，**划一下**，当场在这篇回答的语境里讲明白；
-> 你划过的、卡住的，它替你记着——**不用你主动打开任何中心页面，价值自己找上门**。
+> 这一划，也让下一个读到这里的人不再卡住——**你划过的、卡住的，它替你记着**，
+> 聚合成答主看得见的「读者卡点报告」，再变成一段前置说明，价值回到社区。
 > 想留下点什么，一键存成笔记卡片、导出成 Markdown。
 >
-> 「知识炼金场」只是赛道标签，产品只做一件事：**把读不懂的那一下，当场讲明白。**
+> 旧的落点是「你看懂了」，新的落点是：**你让所有人都少卡一次。**
+
+**线上 Demo**：<https://z.toply.top/zhiban-demo/>（独立域名 <https://zhihu.toply.top/> 同步部署，DNS 生效后启用）
 
 ---
 
@@ -19,6 +22,20 @@
 - **目标用户**：桌面端深度阅读者。产品以 **Chrome 扩展**形态交付，在知乎网页上提供选中即问、全文标记与被动复盘；Demo 站用于无扩展环境下演示同一套核心能力。
 - **已知边界（移动端）**：知乎的阅读主场景在手机，而移动端无法承载扩展与划选交互，这是形态天花板。本仓库**不在移动端提供覆盖**；若后续要做移动，需另立形态（小程序 / 公众号）单独规划，不在本仓库主路径内。
 - 我们不声称「覆盖所有阅读场景」——把桌面深度阅读这一件事做到极致，是本项目的取舍。
+
+### 方向 · 读者卡点飞轮（改造方案 §三 / §4.1–4.4）
+
+> **你卡住的地方，也是所有人的卡点。** 划一下，你当场读懂；这一划，也让下一个读到这里的人不再卡住。
+
+| 环节 | 落点 | 主要代码 |
+|---|---|---|
+| 卡点入账 | 浮层底部「这里我也卡了一下 · N 人也卡在这」，点一下 +1，零注册 | `demo/js/app/popup.js` + `demo/js/core/stuck.js` |
+| 同篇聚合 | 文章页侧栏「本篇卡点」TOP3，点一条跳回原文那一段并高亮 | `demo/js/app/sidebar.js` + `store.js`(`anchorToRanges`) |
+| 读者洞察 | 首页首屏三句话：多少人赞同 / 第几段多少人卡住 / 卡住他们的是同一个词 | `demo/js/app/home.js` + `stuck.js`(`topStuckInsight`) |
+| 答主视角 | `#/creator`「你的读者，卡在这三个地方」→ 一键生成前置说明草稿（复用导读，可导出 `.md`） | `demo/js/app/creator.js` + `guide.js` |
+
+数据来源如实标注（改造方案 §4.5 / 验收 §七-6）：预置演示数据标「演示环境数据」，本机上报标「你的上报」，两者叠加时同时标出。
+本仓库**不做**「一键发布到知乎」（§六：官方接口只读）——答主拿到草稿后自行补进回答，价值由此回到社区。
 
 ### P0 · 必做，且做到极致
 
@@ -70,13 +87,14 @@
 │   ├── assets/            # 样式 + 刘看山动态素材（本地自托管）
 │   └── js/
 │       ├── core/          # ★ 环境无关共享模块（全部关键算法，纯函数可单测）
-│       │                  #   match / textnodes / highlight / context / graph / srs / difficulty / stopwords / quote / selectors / storage / note / review
+│       │                  #   match / textnodes / highlight / context / graph / srs / difficulty / stopwords / quote / selectors / storage / note / review / stuck
 │       ├── app/           # 应用层
 │       │   ├── main.js        # 壳 + 路由分发 + 顶栏导航
-│       │   ├── router.js      # hash 路由：#/ #/article/:id #/igloo #/guide/:id #/hub #/profile
+│       │   ├── router.js      # hash 路由：#/ #/article/:id #/igloo #/guide/:id #/hub #/profile #/creator
 │       │   ├── selection.js   # 划词（含多回答容器重解析）/ popup.js 浮层 / sidebar.js 侧栏
 │       │   ├── prescan.js / guide.js / quiz.js / revisit.js / curation.js
 │       │   ├── home.js        # 首页开场导读 / entry.js 常驻入口
+│       │   ├── creator.js     # 答主视角：读者卡点报告 → 前置说明草稿（§4.4）
 │       │   ├── igloo.js       # 冰屋总览
 │       │   ├── hub.js         # 学习中心（思维导图 / 诊断 / 时间轴）
 │       │   ├── profile.js     # 个人中心（首页 / 收藏体检 / 推荐阅读 / 学习数据）
@@ -120,6 +138,10 @@ export LLM_API_KEY=xxx LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4 LLM_MOD
 export ZHIHU_ACCESS_SECRET=xxx
 ```
 
+> 要跑**浏览器插件**形态（评委现场加载）：见 [§8.3 Chrome 插件](#83-chrome-插件克隆仓库后必做这三步)，
+> 三步 = `npm install` → `npm run build:ext` → `chrome://extensions` 开发者模式加载 `extension/` 目录。
+> 构建产物 `extension/dist/` 不在仓库里，跳过构建会加载失败。
+
 ### 环境变量总表
 
 | 变量 | 位置 | 用途 |
@@ -132,15 +154,17 @@ export ZHIHU_ACCESS_SECRET=xxx
 ## 四、测试与校验
 
 ```bash
-npm run check        # 全量 JS 语法（node --check）+ 模块导入解析（路径/具名/默认导出）
-npm run test:core    # 核心算法 63 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
+npm run check        # 全量 JS 语法（node --check）+ 模块导入解析（路径/具名/默认导出）；当前 61 文件 0 失败
+npm run test:core    # 核心算法 125 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
                      # 边加权/缺口Top1/聚类/策展排序/回访间隔/难度三档/停用词拦截/
-                     # 每周复盘（7 天触发口径/掌握率/Top 缺口）/笔记 Markdown 生成（文件名清洗/时间戳）
+                     # 每周复盘（7 天触发口径/掌握率/Top 缺口）/笔记 Markdown 生成（文件名清洗/时间戳）/
+                     # 卡点聚合（seed+现场上报叠加/TOP3/来源标注/答主报告）/首页三秒洞察（段号/占比/赞数）
 npm run test:hub     # 学习中心 23 项：buildHubGraph 节点/边方向/缺口判定/三色计数/
                      # 主题归类/诊断总结/薄弱主题 TOP3/建议补概念/空数据兜底
 npm run test:api     # 后端 22 项：四接口结构/字段零缺失/400/限流429/CORS/目录穿越
-npm run test:e2e     # 端到端 17 项：Edge 无头 + CDP 真实划选→浮层三层解释（含前置）→选「的」不弹窗→
-                     # 浮层不因清除选区而关闭→示例数据→侧栏短尾巴/入口显隐/导读页（含笔记导出入口）
+npm run test:e2e     # 端到端 46 项：Edge 无头 + CDP 真实划选→首页三秒洞察→浮层三层解释（含前置）→
+                     # 浮层卡点 +1 与来源标注→选「的」不弹窗→侧栏本篇卡点 TOP3 跳段落高亮→
+                     # 答主视角页卡点报告与前置说明草稿→诚实的空状态→SCF 预热接入
 npm run build:ext    # 插件打包到 extension/dist
 ```
 
@@ -159,12 +183,15 @@ Base：`https://<你的云函数域名>`（当前开发环境地址写在 `demo/
 响应（JSON 模式直出，字段名固定）：
 ```json
 {
+  "is_concept": true,
   "definition": "一句话定义（≤40 字）",
   "context_why": "概念在片段里的角色（≤60 字，紧扣片段）",
   "prerequisites": ["梯度"]
 }
 ```
-前端在 `api.js` 中把 `context_why` 映射为 `in_context`。**不要改 prompt 模板里的字段名**，否则前端映射失效。
+非概念（虚词、标点、人名、机构名、无意义片段）时只返回 `{"is_concept": false}`，不编解释；
+前端 `popup.js` 收到后给「看起来不是一个需要解释的概念」的提示，而不是渲染一段编出来的定义。
+前端在 `api.js` 中把 `context_why` 映射为 `in_context`，并对 `{"answer":{…}}` 多包一层的情况做解包（纯函数 `core/explain.js`）。**不要改 prompt 模板里的字段名**，否则前端映射失效。
 
 **流式模式**：请求体加 `"stream": true`，响应 `Content-Type: text/event-stream`，SCF 原样透传 GLM 的 SSE；
 前端 `scfExplainStream` + SSE 解析器边收边渲染，`reasoning_content`（思考链）不计入正文，仅通知 UI。
@@ -216,6 +243,7 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 | `zb:guide:<文章id>` | 生成的导读（含缺口提醒） |
 | `zb:note:<id>` | 我的笔记卡片（单概念 / 导读）：概念、定义、本篇语境、原文引用、来源链接、编辑后正文、时间戳；导出 `.md` 的数据源 |
 | `zb:meta` | 首访引导等元信息，以及 `lastReviewAt`（上次每周复盘时间，用于 7 天触发口径） |
+| `zb:stuck:<文章id>` | 本机卡点上报：`{ marks: [{ concept, paragraphIndex, startOffset, endOffset, at }] }`，同篇同词只存一条（防刷量）；读取时与 `core/stuck.js` 的 seed 数据叠加（§4.2/§4.5） |
 
 掌握状态三档：`unvisited`（还没走过）→ `fuzzy`（有点模糊）→ `passed`（已走过）。
 
@@ -228,6 +256,9 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 | 概念高亮（CSS Custom Highlight，零 DOM 变更；词表缓存而非 Range；MutationObserver 重算） | `demo/js/core/highlight.js` |
 | 段落级上下文截取（前中后三段 + 居中截断 1200 字） | `demo/js/core/context.js` |
 | 预扫描（懒触发、8000 字截断、逐字照抄校验） | `demo/js/app/prescan.js` + SCF `/prescan` |
+| 解释结果归一（`{"answer":{…}}` 多包一层解包 + 字段映射） | `demo/js/core/explain.js` |
+| 预扫描词表清洗（幽灵标记丢弃 + 通用词/频次过滤，问题清单 P1-1/P1-2） | `demo/js/core/prescan.js` |
+| 读者卡点聚合（seed + 现场上报叠加、TOP3、来源标注、答主报告、首屏洞察） | `demo/js/core/stuck.js` |
 | 依赖边 / 白名单过滤（泛化父概念回退）/ 边加权（双篇验证才实线）/ 缺口 Top 1 | `demo/js/core/graph.js` |
 | 拓扑排序与策展排序 | `demo/js/core/graph.js` |
 | 主题聚类（Jaccard 并查集传递闭包，阈值 0.1） | `demo/js/core/graph.js` |
@@ -247,16 +278,44 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 ## 八、部署
 
 ### 8.1 SCF 云函数
+线上地址：`https://1399201542-7y33vuteqi.ap-beijing.tencentscf.com`（与 `demo/js/app/api.js` 的 `SCF_BASE`、`extension/src/background.js` 保持一致）
+
 1. 函数配置 → 上传 `scf/zhiban-scf.zip`（zip 根目录必须含 `scf_bootstrap`/`index.js`/`package.json`/`node_modules`，正斜杠路径；重新打包脚本见 git 历史或按 `extension/build.mjs` 同款 Python zipfile 方式）
 2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）；执行超时 **60 秒**
 3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections`
+4. 改过 `scf/index.js` 后**必须重新打包上传**，否则线上仍是旧 prompt——`/ask` 的 `is_concept` 非概念拦截（问题清单 P0-2）依赖这一步才会生效
 
-### 8.2 静态 Demo 站（可选交付）
-COS 桶开静态网站，上传 `demo/`（保持相对路径）。部署四约束：hash 路由 ✓、相对路径 ✓、函数超时 60s ✓、全链路 HTTPS + CORS ✓。
+### 8.2 静态 Demo 站
 
-### 8.3 Chrome 插件
-`npm run build:ext` 后，Chrome `chrome://extensions` 开发者模式加载 `extension/`。
-background 的 API 地址与 `demo/js/app/api.js` 的 `SCF_BASE` 保持同步。
+| 地址 | 说明 |
+|---|---|
+| <https://z.toply.top/zhiban-demo/> | **当前可用**：独立静态站的实际挂载路径（软链到同一份文件） |
+| <https://zhihu.toply.top/> | 独立域名站点，已建站并绑定域名，**待 DNS 解析到本机后启用** |
+
+宝塔静态站：网站根目录 `/www/wwwroot/zhihu.toply.top`，上传 `demo/` 内容（保持相对路径）即可。
+伪静态需加 SPA 回退 `try_files $uri $uri/ /index.html;`（hash 路由本身不需要，但直接访问 `/creator` 这类路径时能进应用而非 404）。
+部署四约束：hash 路由 ✓、相对路径 ✓、函数超时 60s ✓、全链路 HTTPS + CORS ✓。
+
+### 8.3 Chrome 插件（克隆仓库后必做这三步）
+
+构建产物 `extension/dist/` **不入库**（`.gitignore` 忽略），而 `extension/manifest.json` 第 13 行指向 `dist/background.js`。
+因此直接加载源码目录会因缺 `dist/` 而失败——**必须先构建，再加载**：
+
+```bash
+# ① 在仓库根目录安装开发依赖（仅 esbuild / express）
+npm install
+# ② 打包插件到 extension/dist/（生成 background.js、content.js 等）
+npm run build:ext
+```
+
+③ Chrome 打开 `chrome://extensions` → 右上角开启「开发者模式」→ 点「加载已解压的扩展程序」→
+选中仓库里的 **`extension/` 目录**（是 `extension/`，不是 `extension/dist/`）。
+
+加载完成后打开任意知乎回答页（`https://www.zhihu.com/question/*` 或 `https://zhuanlan.zhihu.com/p/*`），
+选中正文里的概念即可看到「问知伴」浮层。
+
+> 改了 `extension/src/**` 后需重新 `npm run build:ext`，并在 `chrome://extensions` 点该插件的「重新加载」。
+> background 的 API 地址与 `demo/js/app/api.js` 的 `SCF_BASE` 保持同步。
 
 ## 九、开发指南
 

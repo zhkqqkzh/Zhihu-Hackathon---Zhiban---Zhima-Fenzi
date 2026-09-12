@@ -5,6 +5,7 @@
 import { shadowRoot, el, assetUrl } from './ui.js';
 import { interceptSelection } from '../core/stopwords.js';
 import { collectTextNodes as collectParagraphTextNodes } from '../core/textnodes.js';
+import { mergeStuck, hasStuckMark, formatCount } from '../core/stuck.js';
 import { api, sanitizeHtml, zhihuSearchUrl, scfExplainStream, STREAM_EXPLAIN } from './api.js';
 import { runtime } from './runtime.js';
 import * as store from './store.js';
@@ -46,6 +47,9 @@ const CSS = `
 .zb-actions { display: flex; gap: 8px; margin-top: 12px; }
 .zb-act { flex: 1; font-size: 12px; padding: 6px 8px; border: 1px solid #d3d9e0; background: #fff; border-radius: 8px; cursor: pointer; color: #121212; }
 .zb-act:hover { border-color: #056de8; color: #056de8; }
+.zb-act.is-done { color: #8590a6; border-color: #e7e7e7; cursor: default; }
+.zb-act.is-done:hover { color: #8590a6; border-color: #e7e7e7; }
+.zb-stuck-note { font-size: 11px; color: #b0b8c4; margin-top: 6px; }
 `;
 
 let ctx = null; // { host, root, close }
@@ -179,7 +183,8 @@ export function openPopup({ concept, articleId }) {
   pop.appendChild(head);
 
   // 正文骨架：概念名 + 加载占位 + 两个流式字段（先占位隐藏，收到内容再点亮）
-  const loadingEl = el('div', { class: 'zb-loading', text: '看山正眯着眼睛读这段……' });
+  // 文案要诚实（§五-2）：服务端冷启动时首答可能十几秒，别让用户以为卡死。
+  const loadingEl = el('div', { class: 'zb-loading', text: '看山正眯着眼睛读这段……（首次可能要等十几秒，之后就快了）' });
   const defEl = el('div', { class: 'zb-def', style: 'display:none' });
   const ctxEl = el('div', { class: 'zb-ctx', style: 'display:none' });
   const bodyEl = el('div', { class: 'zb-body' }, [
@@ -318,6 +323,40 @@ export function openPopup({ concept, articleId }) {
       el('button', { class: 'zb-act', text: '存为我的笔记卡片', onclick: async () => { note = await saveNote(await makeNote()); } }),
       el('button', { class: 'zb-act', text: '导出 .md', onclick: async () => { note = await exportNote(note || await makeNote(), concept); } }),
     ]));
+
+    // 卡点上报（改造方案 §4.2）：把「卡住」从私有消耗品变成社区公共品。
+    // 人数 = core/stuck.js 的 seed（演示环境数据）+ 本浏览器现场上报，读取时叠加（§4.5）。
+    // 数据来源必须可追溯（验收 §七-6）：含演示数据时如实标注，不冒充真实统计。
+    const marks = await store.getStuckMarks(articleId);
+    const stuckBtn = el('button', { class: 'zb-act' });
+    const stuckNote = el('div', { class: 'zb-stuck-note' });
+    const paintStuck = (list) => {
+      const item = mergeStuck(articleId, list).find((s) => s.concept === concept) || null;
+      const count = item?.count || 0;
+      const done = hasStuckMark(list, concept);
+      stuckBtn.textContent = done
+        ? `已记下 · ${formatCount(count)} 人也卡在这`
+        : (count > 0 ? `这里我也卡了一下 · ${formatCount(count)} 人也卡在这` : '这里我也卡了一下');
+      stuckBtn.disabled = done;
+      stuckBtn.classList.toggle('is-done', done);
+      stuckNote.textContent = !item
+        ? '这个词还没有人标记过，你是第一个。'
+        : item.seedCount > 0 ? '演示环境数据 + 你的上报，只存本浏览器' : '你的上报，只存本浏览器';
+    };
+    paintStuck(marks);
+    stuckBtn.onclick = async () => {
+      stuckBtn.disabled = true;
+      const anchor = captureAnchor(runtime.page, concept);
+      const next = await store.addStuckMark(articleId, {
+        concept,
+        paragraphIndex: anchor?.paragraphIndex ?? null,
+        startOffset: anchor?.startOffset || 0,
+        endOffset: anchor?.endOffset || 0,
+      });
+      paintStuck(next);
+    };
+    bodyEl.appendChild(el('div', { class: 'zb-actions' }, [stuckBtn]));
+    bodyEl.appendChild(stuckNote);
 
     bodyEl.appendChild(el('div', { class: 'zb-foot', text: '所有记录仅存于本浏览器，不上传服务器' }));
     await getGuideTrigger(articleId).catch(() => {}); // 本篇 ≥3 概念触发导读生成提醒

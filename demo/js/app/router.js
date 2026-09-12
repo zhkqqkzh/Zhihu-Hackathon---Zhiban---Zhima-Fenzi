@@ -1,5 +1,5 @@
 // 前端路由（§8.3 约束 1：hash 路由，不用 path 路由——对象存储只认真实文件路径）。
-// 路由：#/ 首页（开场导读）、#/article/:id 文章页、#/igloo 冰屋、#/guide/:id 导读编辑、#/hub 学习中心。
+// 路由：#/ 首页（开场导读）、#/article/:id 文章页、#/igloo 冰屋、#/guide/:id 导读编辑、#/hub 学习中心、#/creator 答主视角。
 
 const listeners = new Set();
 
@@ -10,6 +10,7 @@ export function parseRoute() {
   if (parts[0] === 'igloo') return { name: 'igloo' };
   if (parts[0] === 'hub') return { name: 'hub' };
   if (parts[0] === 'profile') return { name: 'profile' };
+  if (parts[0] === 'creator') return { name: 'creator' };
   if (parts[0] === 'guide' && parts[1]) return { name: 'guide', id: parts[1] };
   return { name: 'home' };
 }

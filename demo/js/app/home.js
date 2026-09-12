@@ -1,20 +1,31 @@
-// 页面：首页（§18.2 三秒定生死）。
-// 首屏只突出 P0（选中即问）与 P1（全文概念标记 / 被动沉淀）：文章列表直接开读。
-// 导读属于 P2，这里只留一条示例，不在主路径上。
+// 页面：首页（§18.2 三秒定生死 / 改造方案 §4.1）。
+// 首屏不再罗列功能，直接摆出真实困境：这篇回答有多少人赞同、多少人在同一段卡住、
+// 卡住他们的是哪个词——数字全部取自文章数据与卡点数据，来源如实标注（验收 §七-6）。
+// 洞察下面直接给这篇回答的卡点 TOP3，点一下跳回原文那一段。
 
 import { ARTICLES, ARTICLE_BY_ID } from '../data/articles.js';
 import { el } from './ui.js';
-import { listGuides } from './store.js';
+import { listGuides, getStuckMarks } from './store.js';
 import { navigate } from './router.js';
+import { topStuckInsight, mergeStuck, formatCount, stuckSourceLabel } from '../core/stuck.js';
+import { gotoAnchor } from './hub.js';
 
 export async function renderHome(app) {
   const guides = await listGuides();
   const demoGuide = guides.find((g) => g.articleId === 'article-backprop');
   const parts = [];
 
+  // §4.1 首屏洞察：聚焦 Demo 主推的那篇回答（卡点数据最全）。
+  const focus = ARTICLES[0];
+  const marks = await getStuckMarks(focus.id);
+  const insight = topStuckInsight(focus.id, focus, marks);
+  const topStuck = mergeStuck(focus.id, marks, 3);
+
   parts.push(el('div', { class: 'HomeHero' }, [
-    el('h1', { text: '知伴 · 读不懂，划一下' }),
-    el('div', { class: 'sub', text: '选中正文里任何一个不懂的概念，当场在这篇回答的语境里讲明白；你划过的、卡住的，它替你记着。' }),
+    // §3.4 一句话主张替代旧 slogan：落点从「你看懂了」改到「你让所有人都少卡一次」。
+    el('h1', { text: '知伴 · 你卡住的地方，也是所有人的卡点。' }),
+    el('div', { class: 'sub', text: '读不懂，划一下，当场讲明白；这一划，也让下一个读到这里的人不再卡住。' }),
+    insight ? renderInsight(focus, insight, topStuck) : renderInsightFallback(),
     el('div', { class: 'ArticleList' }, ARTICLES.map((a) =>
       el('div', { class: 'ArticleCard', onclick: () => navigate(`/article/${a.id}`) }, [
         el('h3', { text: a.title }),
@@ -63,4 +74,30 @@ export async function renderHome(app) {
   }
   parts.push(guideBox);
   app.replaceChildren(...parts);
+}
+
+// 首屏洞察三句话（§4.1）：赞数、同一段的卡住人数、最热的那一个词。
+// 数字全部可追溯，末尾补一句来源与占比，绝不把演示数据说成真实统计。
+function renderInsight(article, insight, topStuck) {
+  return el('div', { class: 'HomeInsight' }, [
+    el('div', { class: 'insight-line', html: `这篇回答有 <b>${formatCount(insight.voteupCount)}</b> 人赞同。` }),
+    el('div', { class: 'insight-line', html: `但读到第 <b>${insight.paragraph}</b> 段，就有 <b>${formatCount(insight.count)}</b> 人卡住了。` }),
+    el('div', { class: 'insight-line', html: `卡住他们的，是同一个词：<b>${insight.concept}</b>。` }),
+    el('div', { class: 'insight-note', text: `全部卡点里有 ${insight.share}% 落在同一个词上 · 数据来源：${stuckSourceLabel(insight)}` }),
+    el('div', { class: 'insight-stuck' }, topStuck.map((s, i) =>
+      el('div', { class: 'insight-stuck-item', onclick: () => gotoAnchor(article.id, { ...s, text: s.concept }) }, [
+        el('span', { class: 'rank', text: `#${i + 1}` }),
+        el('span', { class: 'concept', text: s.concept }),
+        el('span', { class: 'count', text: `${formatCount(s.count)} 人卡在这` }),
+        el('span', { class: 'go', text: '→ 看这一段' }),
+      ]))),
+    el('div', { class: 'insight-actions' }, [
+      el('button', { class: 'zb-btn', text: '去读这篇回答 →', onclick: () => navigate(`/article/${article.id}`) }),
+    ]),
+  ]);
+}
+
+// 没有卡点数据时回到老实的一句话说明，不硬凑洞察（§4.5 诚实空状态的同一条原则）。
+function renderInsightFallback() {
+  return el('div', { class: 'sub', text: '选中正文里任何一个不懂的概念，当场在这篇回答的语境里讲明白；你划过的、卡住的，它替你记着。' });
 }

@@ -58,14 +58,27 @@ export function downloadText(filename, text) {
 }
 
 let toastTimer = null;
+let toastSeq = 0; // 覆盖序号：常驻提示被后一条 toast 冲掉后，其 dismiss 不再误关当前提示
 
 export function toast(message, ms = 2600) {
   const root = document.getElementById('zb-toast-root');
   if (!root) return;
+  toastSeq++;
   root.textContent = message;
   root.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => root.classList.remove('show'), ms);
+}
+
+// 常驻提示（不自动消失），返回 dismiss()：长耗时过程提示用（如预扫描），不阻塞也不闪一下。
+export function toastSticky(message) {
+  const root = document.getElementById('zb-toast-root');
+  if (!root) return () => {};
+  const seq = ++toastSeq;
+  clearTimeout(toastTimer);
+  root.textContent = message;
+  root.classList.add('show');
+  return () => { if (seq === toastSeq) root.classList.remove('show'); };
 }
 
 export function escapeHtml(s) {

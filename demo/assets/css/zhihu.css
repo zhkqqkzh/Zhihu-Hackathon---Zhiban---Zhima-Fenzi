@@ -57,6 +57,19 @@ body {
 .HomeHero { background: #fff; border-radius: 6px; padding: 32px; margin-bottom: 12px; }
 .HomeHero h1 { font-size: 26px; margin-bottom: 8px; }
 .HomeHero .sub { color: var(--zb-gray); margin-bottom: 20px; }
+/* §4.1 首屏三秒洞察：先摆困境，再给这篇回答的卡点可视化 */
+.HomeInsight { margin: 4px 0 20px; }
+.HomeInsight .insight-line { font-size: 19px; line-height: 1.85; color: #444; }
+.HomeInsight .insight-line b { color: var(--zb-blue); font-size: 23px; }
+.HomeInsight .insight-note { font-size: 12px; color: var(--zb-gray); margin-top: 8px; }
+.insight-stuck { margin-top: 16px; border-top: 1px solid var(--zb-border); }
+.insight-stuck-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--zb-border); cursor: pointer; font-size: 14px; }
+.insight-stuck-item:hover { background: #fafbfd; }
+.insight-stuck-item .rank { color: var(--zb-gray); font-weight: 600; }
+.insight-stuck-item .concept { font-weight: 700; }
+.insight-stuck-item .count { color: var(--zb-blue); }
+.insight-stuck-item .go { margin-left: auto; color: var(--zb-gray); font-size: 13px; }
+.insight-actions { margin-top: 16px; }
 .HomeGuide { background: #fff; border-radius: 6px; padding: 28px 32px; }
 .HomeGuide .lead { color: var(--zb-gray); font-size: 14px; margin-bottom: 16px; border-left: 3px solid var(--zb-blue); padding-left: 12px; line-height: 1.8; }
 .HomeGuide h2 { font-size: 20px; margin-bottom: 16px; }

@@ -4,8 +4,9 @@
 // 常驻本地存储声明 + 「删除我的全部记录」放在显眼处（§六）。
 
 import { shadowRoot, el, toast, assetUrl } from './ui.js';
-import { runtime } from './runtime.js';
+import { runtime, jumpToAnchor } from './runtime.js';
 import * as store from './store.js';
+import { mergeStuck, formatCount, stuckSourceLabel } from '../core/stuck.js';
 import { ensurePrescan, refreshHighlights } from './prescan.js';
 import { renderQuizTab } from './quiz.js';
 import { loadSample, confirmClear } from './sample.js';
@@ -31,8 +32,8 @@ const CSS = `
 .zb-x { border: 0; background: none; font-size: 18px; color: #8590a6; cursor: pointer; }
 .zb-profile-btn { border: 1px solid #e0e5ee; background: #fff; padding: 4px 10px; font-size: 12px; color: #056de8; border-radius: 6px; cursor: pointer; margin-left: 6px; }
 .zb-profile-btn:hover { background: #f0f5ff; }
-.zb-tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid #f0f0f0; }
-.zb-tab { border: 0; background: none; padding: 8px 10px; font-size: 13px; color: #666; cursor: pointer; border-bottom: 2px solid transparent; }
+.zb-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid #f0f0f0; }
+.zb-tab { border: 0; background: none; padding: 8px 7px; font-size: 13px; color: #666; cursor: pointer; border-bottom: 2px solid transparent; }
 .zb-tab.on { color: #056de8; border-bottom-color: #056de8; font-weight: 600; }
 .zb-body { flex: 1; overflow: auto; padding: 14px 16px; }
 .zb-fixed { font-size: 12px; color: #8590a6; padding: 10px 16px; border-top: 1px solid #f0f0f0; line-height: 1.7; }
@@ -104,13 +105,14 @@ export function openSidebar(tab = 'tail') {
     }
     body.replaceChildren();
     if (name === 'tail') return renderTailTab(body, badge);
+    if (name === 'stuck') return renderStuckTab(body);
     if (name === 'quiz') return renderQuizTab(body);
     if (name === 'review') return renderReviewTab(body);
     if (name === 'data') return renderDataTab(body);
     if (name === 'profile') return renderProfileTab(body);
   };
 
-  for (const [name, label] of [['tail', '我的短尾巴'], ['quiz', '看山提问'], ['review', '每周复盘'], ['data', '数据控制']]) {
+  for (const [name, label] of [['tail', '我的短尾巴'], ['stuck', '本篇卡点'], ['quiz', '看山提问'], ['review', '每周复盘'], ['data', '数据控制']]) {
     const tabBtn = el('button', { class: 'zb-tab', dataset: { tab: name }, text: label });
     if (name === 'review' && hasUnseenReview()) tabBtn.appendChild(el('span', { class: 'dot' }));
     tabBtn.addEventListener('click', () => renderTab(name));
@@ -184,6 +186,35 @@ async function renderTailTab(body, badge) {
     ]));
   }
   await refreshHighlights();
+}
+
+// 卡点热力 tab（改造方案 §4.3）：本篇读者卡得最多的 3 个词，点一下跳回原文那一段。
+// 数据来源如实标注（§4.5 / 验收 §七-6）：seed 标「演示环境数据」，现场上报标「你的上报」，
+// 两类叠加时同时标出——不把演示数据冒充成真实统计。
+async function renderStuckTab(body) {
+  const page = runtime.page;
+  if (!page) {
+    body.appendChild(el('div', { text: '打开一篇回答后，这里会显示这篇的读者卡点。' }));
+    return;
+  }
+  const marks = await store.getStuckMarks(page.articleId);
+  const list = mergeStuck(page.articleId, marks, 3);
+  if (!list.length) {
+    body.appendChild(el('div', { text: '这篇还没有读者卡点数据。' }));
+    return;
+  }
+  body.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin-bottom:8px', text: '读者卡得最多的 3 个词，点一下跳回原文那一段。' }));
+  for (const s of list) {
+    const item = el('div', { class: 'zb-map-item', style: 'cursor:pointer;align-items:flex-start' }, [
+      el('span', { class: 'dot', style: 'margin-top:5px' }),
+      el('div', {}, [
+        el('div', { text: s.concept }),
+        el('div', { style: 'font-size:11px;color:#8590a6;margin-top:2px', text: `${formatCount(s.count)} 人也卡在这 · ${stuckSourceLabel(s)}` }),
+      ]),
+    ]);
+    item.addEventListener('click', () => jumpToAnchor({ ...s, text: s.concept }, page));
+    body.appendChild(item);
+  }
 }
 
 // 复盘 tab（计划书第 3 条）：图谱/诊断的展开详情，数据全部来自本地概念记录，零接口依赖。

@@ -8,8 +8,9 @@ import * as store from './store.js';
 import { runtime } from './runtime.js';
 import { collectTextNodes } from '../core/textnodes.js';
 import { matchRate } from '../core/match.js';
+import { cleanPrescanConcepts } from '../core/prescan.js';
 import { registerConceptHighlights, clearConceptHighlights } from '../core/highlight.js';
-import { toast } from './ui.js';
+import { toast, toastSticky } from './ui.js';
 import { difficultyMessage, previewDifficulty } from '../core/difficulty.js';
 
 const inFlight = new Map(); // articleId -> Promise
@@ -40,14 +41,22 @@ export async function ensurePrescan(articleId) {
     try {
       text = collectTextNodes(page.container, page.selectors.exclude).text.slice(0, 8000);
     } catch { return null; }
+    // P1-3：预扫描实测 1.7–11.3 秒，给一个不阻塞的常驻提示（pointer-events:none，不影响划词）
+    const dismissHint = toastSticky('正在扫描全文概念…');
     const res = await api.prescan({ articleId, text }).catch(() => null);
-    const concepts = res?.concepts || [];
+    dismissHint();
+    const raw = res?.concepts || [];
+    // P1-1 / P1-2：落库前确定性清洗——幽灵标记（正文匹配不到）与高频通用词都不进词表
+    const cleaned = cleanPrescanConcepts(text, raw);
+    const concepts = cleaned.concepts;
+    if (cleaned.dropped.ghost.length || cleaned.dropped.generic.length || cleaned.dropped.frequent.length) {
+      console.info('[zhiban] prescan 清洗', cleaned.dropped);
+    }
     if (concepts.length > 0) {
       await store.savePrescan(articleId, concepts);
-      // §10.5 验证方法：幽灵标记比例须 < 5%
+      // §10.5 验证方法：清洗后幽灵标记比例恒为 0%（与高亮层用同一套匹配语义）
       const rate = matchRate(text, concepts);
-      console.info(`[zhiban] prescan ${articleId}: ${rate.matched}/${rate.total} matched`, rate.missing);
-      if (rate.rate < 0.95) console.warn(`[zhiban] 幽灵标记比例 ${((1 - rate.rate) * 100).toFixed(1)}% ≥ 5%`, rate.missing);
+      if (rate.rate < 1) console.warn('[zhiban] 清洗后仍有幽灵标记', rate.missing);
       runtime.emit('prescan:done', { articleId, concepts });
       await showDifficultyPreview(articleId, concepts);
     }

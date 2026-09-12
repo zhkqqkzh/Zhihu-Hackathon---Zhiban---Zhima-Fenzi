@@ -1,7 +1,11 @@
 // 端到端冒烟：Edge 无头 + CDP 真实模拟核心链路。
-// 覆盖：文章渲染 → 划选「梯度下降」→ 弹「问知伴」→ 浮层三层解释（含前置知识）→
-//       选「的」不弹窗（三层拦截）→ 浮层不因清除选区而关闭 → 载入示例 → 冰屋总览 →
-//       侧栏「我的短尾巴」概念地图 + 入口按钮随侧栏开合显隐 → 导读页。
+// 覆盖：首页三秒洞察（§4.1）→ 文章渲染 → 划选「梯度下降」→ 弹「问知伴」→ 浮层三层解释（含前置知识）→
+//       浮层卡点上报（seed 人数 + 点一下 +1）→ 选「的」不弹窗（三层拦截）→
+//       浮层不因清除选区而关闭 → 载入示例 → 冰屋总览 →
+//       侧栏「我的短尾巴」概念地图 + 入口按钮随侧栏开合显隐 →
+//       侧栏「本篇卡点」TOP3 + 点击跳回原文高亮 → 导读页 →
+//       答主视角页（输入回答链接 → 读者卡点报告 → 一键生成前置说明草稿 / 未收录链接诚实空状态）。
+//       冷启动预热接入与诚实的加载态文案（§五-2）。
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -106,6 +110,54 @@ const CLICK_ASK = `(() => {
   return null;
 })()`;
 
+// 浮层卡点按钮（改造方案 §4.2）：读取文案 / 点一下上报。
+const STUCK_BTN_TEXT = `(() => {
+  const root = document.getElementById('zb-popup-root');
+  for (const host of root.querySelectorAll('*')) {
+    const pop = host.shadowRoot?.querySelector?.('.zb-pop');
+    if (!pop) continue;
+    const btn = [...pop.querySelectorAll('.zb-act')].find((b) => b.textContent.includes('卡了一下') || b.textContent.includes('已记下'));
+    if (btn) return btn.textContent;
+  }
+  return null;
+})()`;
+const CLICK_STUCK = `(() => {
+  const root = document.getElementById('zb-popup-root');
+  for (const host of root.querySelectorAll('*')) {
+    const pop = host.shadowRoot?.querySelector?.('.zb-pop');
+    if (!pop) continue;
+    const btn = [...pop.querySelectorAll('.zb-act')].find((b) => b.textContent.includes('卡了一下'));
+    if (btn) { btn.click(); return 'clicked'; }
+  }
+  return null;
+})()`;
+
+// 侧栏「本篇卡点」tab（改造方案 §4.3）：切 tab / 读条目 / 点第一条跳回原文。
+const CLICK_STUCK_TAB = `(() => {
+  const root = document.getElementById('zb-sidebar-root');
+  for (const host of root.querySelectorAll('*')) {
+    const tab = [...(host.shadowRoot?.querySelectorAll?.('.zb-tab') || [])].find((b) => b.textContent.includes('本篇卡点'));
+    if (tab) { tab.click(); return 'clicked'; }
+  }
+  return null;
+})()`;
+const STUCK_TAB_ITEMS = `(() => {
+  const root = document.getElementById('zb-sidebar-root');
+  for (const host of root.querySelectorAll('*')) {
+    const items = [...(host.shadowRoot?.querySelectorAll?.('.zb-map-item') || [])].map((c) => c.textContent);
+    if (items.length) return items;
+  }
+  return null;
+})()`;
+const CLICK_FIRST_STUCK = `(() => {
+  const root = document.getElementById('zb-sidebar-root');
+  for (const host of root.querySelectorAll('*')) {
+    const item = host.shadowRoot?.querySelector?.('.zb-map-item');
+    if (item) { item.click(); return 'clicked'; }
+  }
+  return null;
+})()`;
+
 try {
   await waitCdp();
   // 新开标签页（该 Edge 版本 json/new 忽略 url 参数，改用 CDP Page.navigate）
@@ -118,6 +170,37 @@ try {
   };
   await send('Runtime.enable');
   await send('Page.enable');
+  await send('Page.navigate', { url: BASE + '/#/' });
+
+  // 0. 首页三秒洞察（改造方案 §4.1）：首屏直接摆困境，不罗列功能
+  const home = await poll(`document.querySelector('.HomeInsight') ? document.getElementById('app').textContent : null`, 8000);
+  ok(!!home && home.includes('8,432') && home.includes('人赞同'),
+    '首屏洞察：这篇回答有多少人赞同（取真实文章数据）');
+  ok(!!home && home.includes('第 2 段') && home.includes('1,283'),
+    '首屏洞察：读到哪一段、有多少人卡住');
+  ok(!!home && home.includes('卡住他们的，是同一个词：链式法则'),
+    '首屏洞察：卡住他们的是同一个词（§4.1）');
+  ok(!!home && home.includes('演示环境数据'),
+    '首屏洞察：数字如实标注来源，不冒充真实统计（§4.5 / 验收 §七-6）');
+  ok(!!home && home.includes('你卡住的地方，也是所有人的卡点') && home.includes('也让下一个读到这里的人不再卡住'),
+    '首屏一句话主张落地（§3.4：落点从「你看懂了」改到「你让所有人都少卡一次」）');
+  const insightItems = await evaluate(`[...document.querySelectorAll('.insight-stuck-item')].map((e) => e.textContent)`);
+  ok(Array.isArray(insightItems) && insightItems.length === 3 && insightItems[0].includes('链式法则') && insightItems[0].includes('1,283'),
+    '首屏洞察下面直接是那篇回答的卡点 TOP3');
+  ok(await evaluate(`(() => { const i = document.querySelector('.insight-stuck-item'); if (!i) return null; i.click(); return 'clicked'; })()`) === 'clicked',
+    '点击首屏卡点');
+  ok(!!(await poll(`location.hash === '#/article/article-backprop' ? location.hash : null`, 8000)),
+    '点击卡点跳到那篇回答');
+  ok((await poll(`CSS.highlights.has('zhiban-jump') ? 'hl' : null`, 4000)) === 'hl',
+    '跳过去高亮卡住的那一段（§4.1 卡点可视化）');
+
+  // 0.1 冷启动预热 + 诚实的加载态文案（改造方案 §五-2）
+  ok((await evaluate(`typeof window.__zhiban?.warmup`)) === 'function', '页面启动即接入 SCF 预热（§五-2 冷启动）');
+  ok((await evaluate(`window.__zhiban.warmup()`)) === 'skipped-local',
+    '本地 dev server 常驻无需预热，线上才打 /ping（§五-2）');
+  ok((await evaluate(`fetch('/js/app/popup.js').then((r) => r.text()).then((t) => t.includes('首次可能要等十几秒'))`)) === true,
+    '加载态文案诚实说明首次可能要等十几秒（§五-2）');
+
   await send('Page.navigate', { url: BASE + '/#/article/article-backprop' });
 
   // 1. 文章渲染
@@ -134,6 +217,15 @@ try {
   ok(!!popText, '浮层返回三层解释（definition 非空）');
   ok(popText.includes('这篇回答里'), '含「为什么在这篇里重要」层');
   ok(popText.includes('你可能需要先了解') && popText.includes('梯度'), '含「你可能需要先了解」前置层');
+
+  // 3.1 卡点上报（改造方案 §4.2 / §4.5）：seed 人数（梯度下降 712）+ 点一下 +1，转已上报态且标注数据来源
+  const stuckBefore = await poll(STUCK_BTN_TEXT);
+  ok(typeof stuckBefore === 'string' && stuckBefore.includes('712'), `浮层卡点按钮显示 seed 人数（${stuckBefore}）`);
+  ok(await evaluate(CLICK_STUCK) === 'clicked', '点击「这里我也卡了一下」');
+  const stuckAfter = await poll(`(${STUCK_BTN_TEXT}).includes('已记下') ? (${STUCK_BTN_TEXT}) : null`);
+  ok(typeof stuckAfter === 'string' && stuckAfter.includes('713'), `点一下 +1 并转为已上报态（${stuckAfter}）`);
+  const stuckLabel = await poll(`(${POPUP_TEXT}).includes('演示环境数据') ? (${POPUP_TEXT}) : null`);
+  ok(!!stuckLabel, '卡点人数如实标注「演示环境数据」来源（§4.5）');
 
   // 4. 选「的」→ 不弹窗（三层拦截，§15 红线）
   await evaluate(`window.getSelection().removeAllRanges()`);
@@ -170,6 +262,17 @@ try {
   ok(!!tail && tail.items.some((t) => t.includes('梯度下降')), '概念地图含已展开的「梯度下降」');
   ok(!!tail && tail.expanded >= 1, `已展开标记存在（${tail?.expanded} 个）`);
 
+  // 6.2 侧栏「本篇卡点」（改造方案 §4.3）：TOP3 卡点 + 人数 + 演示数据标注 + 点击跳回原文并高亮
+  ok(await evaluate(CLICK_STUCK_TAB) === 'clicked', '侧栏切入「本篇卡点」tab');
+  const stuckItems = await poll(`(${STUCK_TAB_ITEMS})?.length === 3 ? (${STUCK_TAB_ITEMS}) : null`);
+  ok(!!stuckItems && stuckItems[0].includes('链式法则') && stuckItems[0].includes('1,283'),
+    `卡点热力 TOP3 首位（${stuckItems?.[0]}）`);
+  ok(!!stuckItems && stuckItems.every((t) => t.includes('也卡在这') && t.includes('演示环境数据')),
+    '卡点人数如实标注「演示环境数据」来源（§4.5）');
+  ok(await evaluate(CLICK_FIRST_STUCK) === 'clicked', '点击卡点条目');
+  await sleep(900);
+  ok((await evaluate(`CSS.highlights.has('zhiban-jump')`)) === true, '点击卡点跳回原文段落并高亮该词（§4.3）');
+
   // 6.1 入口按钮：侧栏展开时隐藏，关闭后恢复
   ok((await evaluate(`document.querySelector('#zb-entry > *')?.style.display`)) === 'none',
     '侧栏展开时入口按钮隐藏');
@@ -191,6 +294,49 @@ try {
   const guide = await evaluate(`document.getElementById('app').textContent`);
   ok(guide.includes('你可能需要先搞懂这') && guide.includes('偏导数') && guide.includes('存为我的笔记卡片') && guide.includes('导出 .md'),
     '导读页渲染（含缺口提醒与笔记导出入口）');
+
+  // 8. 答主视角页（改造方案 §4.4）：输入回答链接 → 读者卡点报告 → 一键生成「前置说明」草稿
+  await evaluate(`location.hash = '#/creator'`);
+  await sleep(600);
+  const creator = await evaluate(`document.getElementById('app').textContent`);
+  ok(creator.includes('你的读者，卡在这三个地方'), '答主视角页标题「你的读者，卡在这三个地方」（§4.4）');
+
+  const fillAndGo = (link) => `(() => {
+    const i = document.querySelector('.creator-input');
+    if (!i) return 'noinput';
+    i.value = ${JSON.stringify(link)};
+    document.querySelector('.creator-go').click();
+    return 'ok';
+  })()`;
+  ok(await evaluate(fillAndGo('#/article/article-derivative')) === 'ok', '粘贴回答链接并生成报告');
+  const report = await poll(`document.getElementById('app').textContent.includes('486') ? document.getElementById('app').textContent : null`);
+  ok(!!report && report.includes('极限') && report.includes('人卡在这'), '读者卡点报告 TOP3 首位（极限 · 486 人卡在这）');
+  ok(!!report && report.includes('演示环境数据'), '卡点报告如实标注数据来源（§4.5）');
+  ok(!!report && report.includes('一键生成前置说明草稿'), '提供「一键生成前置说明草稿」入口');
+  ok(!!report && report.includes('贴回你的知乎回答'),
+    '卡点报告点明产出回到社区的落点（§七-4：知伴不代发布，答主自行补进知乎回答）');
+
+  ok(await evaluate(`(() => {
+    const b = document.querySelector('.creator-gen');
+    if (!b) return null;
+    b.click();
+    return 'clicked';
+  })()`) === 'clicked', '点击生成前置说明草稿');
+  ok(!!(await poll(`location.hash === '#/guide/article-derivative' ? location.hash : null`, 8000)),
+    '草稿生成后进入导读页');
+  const creatorGuide = await poll(`(() => {
+    const t = document.getElementById('app').textContent;
+    return t.includes('读者常在这里卡住') ? t : null;
+  })()`, 8000);
+  ok(!!creatorGuide && creatorGuide.includes('极限') && creatorGuide.includes('原文里这句'),
+    '草稿复用导读：卡点概念 + 原文引用，缺定义处留提示由答主补（§4.4）');
+
+  // 8.1 未收录的回答链接：给诚实空状态，不硬凑数据（§4.5）
+  await evaluate(`location.hash = '#/creator'`);
+  await sleep(600);
+  await evaluate(fillAndGo('https://www.zhihu.com/question/1/answer/9999999999'));
+  const emptyState = await poll(`document.getElementById('app').textContent.includes('认不出这个链接') ? document.getElementById('app').textContent : null`);
+  ok(!!emptyState && emptyState.includes('演示环境只收录了'), '未收录链接给诚实空状态，不硬凑数据（§4.5）');
 } catch (e) {
   fail++;
   console.error('E2E aborted:', e.message);
