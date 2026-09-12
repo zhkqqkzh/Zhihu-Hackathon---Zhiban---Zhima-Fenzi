@@ -12,6 +12,7 @@ const PRESCAN_KEY = (id) => `${PREFIX}prescan:${id}`;
 const GUIDE_KEY = (id) => `${PREFIX}guide:${id}`;
 const META_KEY = `${PREFIX}meta`;
 const LINK_CACHE_KEY = (name) => `${PREFIX}links:${name}`;
+const NOTE_KEY = (id) => `${PREFIX}note:${id}`;
 
 // 浏览器适配：localStorage 包成异步接口（demo 环境）
 function createLocalStorageAdapter() {
@@ -150,11 +151,37 @@ export async function listGuides() {
   return out;
 }
 
-// ---- 元信息：首访引导等 ----
+// ---- 笔记卡片（计划书第 4 条：假发布 → 真笔记）----
+// 键 zb:note:<id>，本地存储、无接口依赖；导出 .md 在 app 层用 core/note.js 生成。
+export async function getNote(id) { return await storage.get(NOTE_KEY(id)); }
+export async function saveNote(note) {
+  const id = note.id || `n${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
+  const next = { createdAt: Date.now(), ...note, id };
+  await storage.set(NOTE_KEY(id), next);
+  return next;
+}
+export async function listNotes() {
+  const keys = await storage.keys(NOTE_KEY(''));
+  const out = [];
+  for (const k of keys) { const r = await storage.get(k); if (r) out.push(r); }
+  return out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+export async function deleteNote(id) { await storage.remove(NOTE_KEY(id)); }
+
+// ---- 元信息：首访引导 / 复盘时间等 ----
 export async function getMeta() { return (await storage.get(META_KEY)) || {}; }
 export async function saveMeta(patch) {
   const cur = await getMeta();
   await storage.set(META_KEY, { ...cur, ...patch });
+}
+
+// ---- 每周复盘（计划书第 3 条）：只记「上次复盘时间」，其余全部由本地数据实时算 ----
+export async function getLastReviewAt() {
+  const meta = await getMeta();
+  return Number(meta.lastReviewAt) || 0;
+}
+export async function markReviewShown(at = Date.now()) {
+  await saveMeta({ lastReviewAt: at });
 }
 
 // ---- 数据控制（§六）：一键删除全部记录，不藏进设置 ----

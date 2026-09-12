@@ -45,7 +45,20 @@ export function shadowRoot(hostTag = 'div', cssText = '') {
   return { host, root };
 }
 
+// 触发浏览器下载一个文本文件（笔记导出 .md，无接口依赖）。
+export function downloadText(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 let toastTimer = null;
+
 export function toast(message, ms = 2600) {
   const root = document.getElementById('zb-toast-root');
   if (!root) return;

@@ -2,13 +2,13 @@
 // 选区检测在 Shadow 外部监听文档事件（§15）；拦截走三层（popup.js）。
 // 上下文：段落级截取（§10.4）+ 引句扩句（§10.7）。
 
-import { el, shadowRoot } from './ui.js';
+import { el, shadowRoot, toast } from './ui.js';
 import { runtime } from './runtime.js';
 import { interceptSelection } from '../core/stopwords.js';
 import { extractParagraphContext } from '../core/context.js';
 import { collectTextNodes } from '../core/textnodes.js';
 import { expandToSentence } from '../core/quote.js';
-import { openPopup, closePopup, isPopupOpen, prefetchExplain } from './popup.js';
+import { openPopup, prefetchExplain } from './popup.js';
 
 const BTN_CSS = `
 :host { all: initial; }
@@ -29,16 +29,32 @@ let suppressUntil = 0; // 点击按钮后抑制 selectionchange 重定位
 export function initSelection() {
   document.addEventListener('selectionchange', () => {
     if (Date.now() < suppressUntil) return;
-    if (!runtime.page?.body) return;
+    if (!runtime.page) return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       hideAsk();
-      if (isPopupOpen()) closePopup(); // 仅选区清除时关闭（§15）
-      return;
+      return; // 选区清除只收起「问知伴」按钮，不关解释浮层（浮层只由 × 关闭）
     }
     const range = sel.getRangeAt(0);
-    // 作用域严格限定在正文容器内（§10.2 坑 4：评论区、推荐流不被点亮/触发）
-    if (!runtime.page.body.contains(range.commonAncestorContainer)) {
+
+    // 多回答支持：动态解析划词所在的实际回答容器，并同步 runtime.page。
+    // 问题页有多个回答时，runtime.page 初始指向第一个回答容器，后续回答的选区
+    // 会落在 body 之外，需按选区最近祖先重新解析 container/body（§10.2 坑 4）。
+    let container = runtime.page.container;
+    let body = runtime.page.body;
+    if (!body.contains(range.commonAncestorContainer)) {
+      const answerNode = range.commonAncestorContainer.nodeType === 3
+        ? range.commonAncestorContainer.parentElement
+        : range.commonAncestorContainer;
+      const answerCard = answerNode?.closest?.(runtime.page.selectors.articleContainer);
+      if (answerCard) {
+        container = answerCard;
+        body = answerCard.querySelector(runtime.page.selectors.articleBody) || answerCard;
+        runtime.page.container = container;
+        runtime.page.body = body;
+      }
+    }
+    if (!body || !body.contains(range.commonAncestorContainer)) {
       hideAsk();
       return;
     }
@@ -80,7 +96,12 @@ function showAsk(range, text) {
   // 三层拦截（§15）：非空 / 停用词 / 超长——在这里先做掉，不弹按钮；
   // 模型判定"非概念"在 popup 层给友好提示。
   const intercepted = interceptSelection(text);
-  if (intercepted) return;
+  if (intercepted) {
+    // interceptSelection 返回的是友好提示文案，不是布尔值——早期这里写成静默 return，
+    // 划到停用词/纯标点/超长文本时既不弹按钮也没任何反馈，看起来像「无解释无反应」。
+    toast(intercepted);
+    return;
+  }
   const { host, root } = shadowRoot('div', BTN_CSS);
   const btn = el('button', { class: 'zb-ask', text: '问知伴' });
   root.appendChild(btn);
@@ -117,8 +138,7 @@ function showAsk(range, text) {
 
 async function ask(page, text, range) {
   runtime.page.context = computeContext(range, text);
-  // 预扫描懒触发（§10.5）：与第一次提问并行发起
+  // 预扫描兜底触发（§10.5）：正常已在打开文章时跑完，这里只是没有命中缓存时补一次
   runtime.emit('prescan:maybe');
-  const rect = range.getBoundingClientRect();
-  openPopup({ concept: text, x: rect.left + rect.width / 2, y: rect.bottom, articleId: page.articleId });
+  openPopup({ concept: text, articleId: page.articleId }); // 右下角浮窗，无需选区坐标
 }

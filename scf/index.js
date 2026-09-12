@@ -10,6 +10,8 @@
 //   POST /search    知乎站内搜索代理：{ query } → { items: [...] }
 //   POST /quiz      看山提问：{ concept, quote } → { question, quizPoints }
 //                   或 { concept, quote, answer } → { verdict, feedback }
+//   POST /collections 收藏夹体检：{ items: [{ title, excerpt, voteup, comments, score }] }
+//                   → { groups: [{ name, items: [标题] }], reviews: [{ title, level, comment }] }
 //
 // Node 12 兼容说明：不使用可选链（?.）与空值合并（??）；
 // 无全局 fetch，用内置 https 模块，req.setTimeout(55000) 实现超时
@@ -20,7 +22,7 @@ var https = require('https');
 
 // 大模型端点：智谱 GLM（OpenAI 兼容）
 var LLM_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
-var LLM_MODEL = 'glm-4.5-air';
+var LLM_MODEL = 'glm-4.7-flashx';
 var ZHIHU_SEARCH_URL = 'https://developer.zhihu.com/api/v1/content/zhihu_search';
 
 var app = express();
@@ -38,20 +40,13 @@ app.use(function (req, res, next) {
   next();
 });
 
-// ---- Prompt 模板（/ask 用，逐字固定，只填入 term/context）----
+// ---- Prompt 模板（/ask 用）：精简指令 → 更少的输出 token、更快的首字延迟 ----
+// 流式场景下模型边生成前端边显示，指令越短生成越快；质量约束保留最关键的三条。
 function buildPrompt(term, context) {
-  return '下面是知乎一篇回答的片段：\n' +
-    context + '\n' +
-    '用户选中了「' + term + '」。请输出 JSON，包含三个字段：\n' +
-    'definition：一句话定义，不超过 40 字\n' +
-    'context_why：这个概念在上述片段里扮演什么角色、作者为什么提到它，不超过 60 字，必须紧扣片段具体内容\n' +
-    'prerequisites：理解它需要先掌握的概念名数组，最多 2 个。\n' +
-    '判定标准：只输出「不懂它就完全无法理解当前概念」的那些概念。\n' +
-    '「懂了更好、不懂也能凑合」的不算，「同一领域的邻近概念」也不算。\n' +
-    '想不出就给 1 个。宁可只给 1 个真正必要的，也不要给 2 个沾边的。\n' +
-    '确实毫无前置的可以返回空数组，但绝大多数专业概念至少有一个前置。\n' +
-    '禁止写"数学""物理""基础"这类过宽的词，要输出具体概念名。\n' +
-    '只输出 JSON，不要任何额外文字。';
+  return '知乎回答片段：' + context + '\n' +
+    '用户选中「' + term + '」。直接输出 JSON（不要思考过程、不要 markdown 代码块）：\n' +
+    '{"definition":"一句话定义，≤40字","context_why":"它在这段话里的作用，作者为何提到，≤60字，紧扣片段","prerequisites":["最多2个"]}\n' +
+    'prerequisites 只填「不懂它就完全无法理解」的概念；想不出给 1 个；禁写"数学""物理"这类过宽词。';
 }
 
 // 预扫描 Prompt（§10.5：概念名必须逐字照抄正文，否则变成幽灵标记）
@@ -76,6 +71,17 @@ function quizJudgePrompt(concept, quote, question, answer) {
     '概念：「' + concept + '」\n原文引用：' + quote + '\n追问：' + question + '\n读者的回答：' + answer + '\n' +
     '判不出一律记为 "partial"。只输出 JSON。';
 }
+
+// 收藏夹体检 Prompt：聚类 + 点评一次出（客户端已按规则打分，score 越高越值得读）
+var COLLECTIONS_PROMPT_HEAD =
+  '你是「知伴」，帮用户体检知乎收藏夹。下面是收藏夹里的文章（score 是规则打分，越高越值得读）。\n' +
+  '请做两件事，输出 JSON：\n' +
+  '1. groups：按主题把文章聚成 3-6 组，组名 4-10 个字（如「大模型与算法」「职场与成长」）。\n' +
+  '   每篇文章的标题只能出现在一个组里，组名不得重复，标题必须逐字照抄输入。\n' +
+  '2. reviews：只点评 score 最高的 6 篇，各给一句话结论。\n' +
+  '{"groups":[{"name":"组名","items":["文章标题"]}],' +
+  '"reviews":[{"title":"文章标题","level":"推荐|一般|可略过","comment":"≤40字，说清为什么"}]}\n' +
+  'level 只能是 推荐 / 一般 / 可略过。只输出 JSON，不要解释。\n\n收藏列表：\n';
 
 // ---- Node 12 无全局 fetch：内置 https 请求助手 ----
 function httpsRequestJson(method, urlStr, headers, body, timeoutMs) {
@@ -119,8 +125,9 @@ function getApiKey() {
   return process.env.ZHIPU_API_KEY || process.env.DEEPSEEK_API_KEY || '';
 }
 
-// 调 GLM，JSON 模式；返回解析后的对象，失败抛错（由路由层转 502）
-async function callLlm(prompt) {
+// 调 GLM，JSON 模式；返回解析后的对象，失败抛错（由路由层转 502）。
+// maxTokens 默认 400（三层解释 JSON 极短）；收藏夹体检输出较长，调用方传更大值。
+async function callLlm(prompt, maxTokens) {
   var apiKey = getApiKey();
   if (!apiKey) {
     var e = new Error('服务器未配置 ZHIPU_API_KEY');
@@ -133,6 +140,8 @@ async function callLlm(prompt) {
       model: LLM_MODEL,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
+      max_tokens: maxTokens || 400, // 封顶避免模型啰嗦拖慢
+      thinking: { type: 'disabled' }, // glm-4.7-flashx 默认吐 reasoning_content 思考链，关掉提速
       response_format: { type: 'json_object' }
     },
     55000);
@@ -152,6 +161,65 @@ async function callLlm(prompt) {
   return JSON.parse(content); // 模型输出非合法 JSON 时抛错，由路由层转 500/502
 }
 
+// 调 GLM 流式模式（SSE），把上游 chunk 原样透传给 res，逐字到达前端。
+// 网关若缓冲整包，前端仍能按 SSE 解析（降级为一次性渲染），不会报错。
+// 返回 Promise：正常结束（收到 [DONE] / 上游 end）时 resolve；上游错误 reject。
+function streamLlm(prompt, res) {
+  return new Promise(function (resolve, reject) {
+    var apiKey = getApiKey();
+    if (!apiKey) {
+      var e0 = new Error('服务器未配置 ZHIPU_API_KEY');
+      e0.status = 500;
+      reject(e0);
+      return;
+    }
+    var payload = JSON.stringify({
+      model: LLM_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      max_tokens: 400, // 三层解释JSON极短，封顶避免模型啰嗦拖慢
+      thinking: { type: 'disabled' }, // glm-4.7-flashx 默认吐 reasoning_content 思考链，关掉提速
+      response_format: { type: 'json_object' },
+      stream: true
+    });
+    var req = https.request({
+      hostname: 'open.bigmodel.cn',
+      path: '/api/paas/v4/chat/completions',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + apiKey,
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    }, function (up) {
+      if (up.statusCode < 200 || up.statusCode >= 300) {
+        var chunks = [];
+        up.on('data', function (c) { chunks.push(c); });
+        up.on('end', function () {
+          var e1 = new Error('大模型 API 返回 ' + up.statusCode + ': ' + Buffer.concat(chunks).toString('utf8').slice(0, 200));
+          e1.status = 502;
+          reject(e1);
+        });
+        return;
+      }
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Accel-Buffering', 'no'); // 尽力禁止各级代理缓冲
+      var done = false;
+      up.on('data', function (c) { if (!done) res.write(c); });
+      up.on('end', function () { if (!done) { done = true; res.end(); } resolve(); });
+      up.on('error', function (err) { if (!done) { done = true; res.end(); } reject(err); });
+    });
+    req.on('error', function (e) { reject(e); });
+    req.setTimeout(55000, function () {
+      req.destroy(new Error('upstream timeout after 55000ms'));
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
 function llmError(e) {
   var status = e && e.status ? e.status : 502;
   return { status: status, body: { error: String((e && e.message) || e).slice(0, 300) } };
@@ -166,9 +234,25 @@ app.get('/ping', function (req, res) {
 app.post('/ask', async function (req, res) {
   var body = req.body || {};
   var term = typeof body.term === 'string' ? body.term.trim() : '';
-  var context = typeof body.context === 'string' ? body.context.trim() : '';
+  // 预填加速：只送概念所在段落附近的 600 字，足够判断语境，显著减少 prefill 耗时
+  var context = typeof body.context === 'string' ? body.context.trim().slice(0, 600) : '';
   if (!term || !context) {
     res.status(400).json({ error: 'term 和 context 均为必填字符串' });
+    return;
+  }
+  // 流式：body.stream=true 时透传 GLM SSE，前端边收边渲染
+  if (body.stream === true) {
+    try {
+      await streamLlm(buildPrompt(term, context), res);
+    } catch (e) {
+      if (!res.headersSent) {
+        var err = llmError(e);
+        res.status(err.status).json(err.body);
+      } else {
+        res.write('data: ' + JSON.stringify({ error: String((e && e.message) || e).slice(0, 300) }) + '\n\n');
+        res.end();
+      }
+    }
     return;
   }
   try {
@@ -278,6 +362,53 @@ app.post('/quiz', async function (req, res) {
   } catch (e) {
     var err = llmError(e);
     res.status(err.status).json(err.body);
+  }
+});
+
+// 收藏夹体检（个人中心）：规则打分在客户端做，这里只负责聚类 + 点评。
+// 失败降级返回空结果（前端已有规则评分，不会被阻塞）。
+app.post('/collections', async function (req, res) {
+  var body = req.body || {};
+  var items = Array.isArray(body.items) ? body.items.slice(0, 20) : [];
+  items = items.map(function (it) {
+    return {
+      title: String((it && it.title) || '').slice(0, 80),
+      excerpt: String((it && it.excerpt) || '').replace(/\s+/g, ' ').slice(0, 120),
+      score: Number((it && it.score) || 0)
+    };
+  }).filter(function (it) { return it.title; });
+  if (!items.length) {
+    res.status(400).json({ error: 'items 为必填的非空数组' });
+    return;
+  }
+  var lines = items.map(function (it, i) {
+    return (i + 1) + '. [' + it.score + '分] ' + it.title + (it.excerpt ? ' —— ' + it.excerpt : '');
+  }).join('\n');
+  try {
+    var result = await callLlm(COLLECTIONS_PROMPT_HEAD + lines, 1200);
+    var titles = {};
+    items.forEach(function (it) { titles[it.title] = true; });
+    // 只保留输入里真实存在的标题（模型偶尔会改写标题，那就不是我们的文章了）
+    var groups = (Array.isArray(result && result.groups) ? result.groups : []).map(function (g) {
+      var names = (Array.isArray(g && g.items) ? g.items : [])
+        .map(function (t) { return String(t).trim(); })
+        .filter(function (t) { return titles[t]; });
+      return { name: String((g && g.name) || '').slice(0, 20), items: names };
+    }).filter(function (g) { return g.name && g.items.length; }).slice(0, 6);
+
+    var reviews = (Array.isArray(result && result.reviews) ? result.reviews : []).map(function (r) {
+      var level = String((r && r.level) || '');
+      if (level !== '推荐' && level !== '一般' && level !== '可略过') level = '一般';
+      return {
+        title: String((r && r.title) || '').trim(),
+        level: level,
+        comment: String((r && r.comment) || '').slice(0, 80)
+      };
+    }).filter(function (r) { return titles[r.title]; }).slice(0, 6);
+
+    res.json({ groups: groups, reviews: reviews });
+  } catch (e) {
+    res.json({ groups: [], reviews: [], _degraded: true, _reason: String((e && e.message) || e).slice(0, 120) });
   }
 });
 

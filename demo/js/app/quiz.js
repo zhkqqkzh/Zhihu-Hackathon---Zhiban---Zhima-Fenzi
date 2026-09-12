@@ -3,7 +3,7 @@
 // 判定 → 正确「已走过」/ 部分「有点模糊」/ 错误保持「还没走过」→ 写回概念记录。
 // 触发：滚动到底（阅读进度 §9.1）+ 本篇有已展开概念。
 
-import { el, toast } from './ui.js';
+import { el, toast, assetUrl } from './ui.js';
 import * as store from './store.js';
 import { api, ensureQuizQuestion } from './api.js';
 import { runtime } from './runtime.js';
@@ -41,13 +41,19 @@ export async function renderQuizTab(body) {
   ).slice(0, 3);
 
   if (pool.length === 0) {
+    body.appendChild(el('div', { style: 'text-align:center;margin-bottom:12px' }, [
+      el('img', { src: assetUrl('kanshan/sleep.gif'), style: 'width:80px;height:80px;border-radius:50%' }),
+    ]));
     body.appendChild(el('div', { style: 'font-size:13px;color:#8590a6;line-height:1.8', text:
       page
-        ? '这篇还没有能问你的问题。先划选几个概念展开，读完滚到底，我就会来提问。'
+        ? '看山翻了翻笔记本，这篇还没有能问你的问题。\n先划选几个概念展开，读完滚到底，看山就会来找你提问。'
         : '打开一篇回答，展开几个概念并读到结尾，看山会反过来问你 2-3 个问题。答对了营地标记「已走过」。' }));
     return;
   }
 
+  body.appendChild(el('div', { style: 'text-align:center;margin-bottom:10px' }, [
+    el('img', { src: assetUrl('kanshan/idle.gif'), style: 'width:80px;height:80px;border-radius:50%' }),
+  ]));
   body.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin-bottom:10px', text: '不是背诵题。随便说，看山给你补充解释。' }));
   for (const rec of pool) {
     body.appendChild(renderQuizCard(rec));
@@ -56,10 +62,16 @@ export async function renderQuizTab(body) {
 
 function renderQuizCard(rec) {
   const card = el('div', { class: 'zb-quiz' }, [
+    el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:6px' }, [
+      el('img', { src: assetUrl('kanshan/wave.gif'), style: 'width:24px;height:24px;border-radius:50%' }),
+      el('span', { style: 'font-size:12px;color:#8590a6', text: '看山问' }),
+    ]),
     el('div', { class: 'zb-quiz-concept', text: `关于「${rec.name}」` }),
     el('div', { class: 'zb-quiz-q', text: rec.quizQuestion || '看山正在想问题……' }),
-    el('textarea', { class: 'zb-quiz-a', rows: '2', placeholder: '用你自己的话说……' }),
-    el('button', { class: 'zb-quiz-submit', text: '回答', onclick: () => submit(card, rec) }),
+    el('textarea', { class: 'zb-quiz-a', rows: '3', placeholder: '用你自己的话说……' }),
+    el('div', { class: 'zb-quiz-actions' }, [
+      el('button', { class: 'zb-quiz-submit', text: '回答', onclick: () => submit(card, rec) }),
+    ]),
   ]);
   // 线上模式：explain 不返回追问，懒生成（本地 mock 自带，直接跳过）
   if (!rec.quizQuestion) {

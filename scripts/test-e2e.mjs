@@ -1,6 +1,7 @@
 // 端到端冒烟：Edge 无头 + CDP 真实模拟核心链路。
 // 覆盖：文章渲染 → 划选「梯度下降」→ 弹「问知伴」→ 浮层三层解释（含前置知识）→
-//       选「的」不弹窗（三层拦截）→ 载入示例 → 冰屋总览 → 去看山依赖链（拓扑序+实线边）→ 导读页。
+//       选「的」不弹窗（三层拦截）→ 浮层不因清除选区而关闭 → 载入示例 → 冰屋总览 →
+//       侧栏「我的短尾巴」概念地图 + 入口按钮随侧栏开合显隐 → 导读页。
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -140,6 +141,8 @@ try {
   await evaluate(SELECT('的'));
   await sleep(600);
   ok((await evaluate(ASK_VISIBLE)) === null, '选「的」不弹窗（拦截生效，非"坏了"）');
+  // 4.1 清除选区 / 重选别的词，解释浮层都不该被关掉——只由「×」关闭
+  ok((await evaluate(`!!(${POPUP_TEXT})`)) === true, '清除选区后解释浮层仍打开（仅 × 关闭）');
 
   // 5. 载入示例 → 冰屋
   await evaluate(`window.__zhiban.loadSample()`);
@@ -150,29 +153,44 @@ try {
   ok(igloo.includes('偏导数'), '冰屋列出导读（缺口：偏导数）');
   ok(igloo.includes('我的机器学习入门路径'), '看山策展：3 篇同主题串成路径');
 
-  // 6. 去看山：链拓扑序 + 实线边
-  await evaluate(`window.__zhiban.openSidebar('chain')`);
-  await sleep(800);
-  const chain = await evaluate(`(() => {
+  // 6. 侧栏「我的短尾巴」：本篇概念地图（预扫描词表），入口按钮随侧栏开合显隐
+  await evaluate(`location.hash = '#/article/article-backprop'`);
+  await sleep(900);
+  await evaluate(`window.__zhiban.openSidebar()`);
+  await sleep(1200);
+  const tail = await evaluate(`(() => {
     const root = document.getElementById('zb-sidebar-root');
     for (const host of root.querySelectorAll('*')) {
-      const camps = [...(host.shadowRoot?.querySelectorAll?.('.zb-camp') || [])].map((c) => c.textContent);
-      if (camps.length) return { camps, solid: host.shadowRoot.querySelectorAll('.zb-arrow.solid').length };
+      const items = [...(host.shadowRoot?.querySelectorAll?.('.zb-map-item') || [])].map((c) => c.textContent);
+      if (items.length) return { items, expanded: host.shadowRoot.querySelectorAll('.zb-map-item.expanded').length };
     }
     return null;
   })()`);
-  ok(chain && chain.camps.length >= 5, `去看山营地数 ≥5（实际 ${chain?.camps.length}）`);
-  const idx = (name) => chain.camps.findIndex((c) => c.startsWith(name));
-  ok(idx('导数') >= 0 && idx('导数') < idx('梯度') && idx('梯度') < idx('梯度下降') && idx('梯度下降') < idx('反向传播'),
-    '依赖链拓扑序：导数 → 梯度 → 梯度下降 → 反向传播');
-  ok(chain.solid >= 1, `双篇验证的实线边存在（${chain.solid} 段）`);
+  ok(!!tail && tail.items.length >= 5, `侧栏本篇概念数 ≥5（实际 ${tail?.items?.length}）`);
+  ok(!!tail && tail.items.some((t) => t.includes('梯度下降')), '概念地图含已展开的「梯度下降」');
+  ok(!!tail && tail.expanded >= 1, `已展开标记存在（${tail?.expanded} 个）`);
+
+  // 6.1 入口按钮：侧栏展开时隐藏，关闭后恢复
+  ok((await evaluate(`document.querySelector('#zb-entry > *')?.style.display`)) === 'none',
+    '侧栏展开时入口按钮隐藏');
+  await evaluate(`(() => {
+    const root = document.getElementById('zb-sidebar-root');
+    for (const host of root.querySelectorAll('*')) {
+      const x = host.shadowRoot?.querySelector?.('.zb-x');
+      if (x) { x.click(); return 'closed'; }
+    }
+    return null;
+  })()`);
+  await sleep(400);
+  ok((await evaluate(`document.querySelector('#zb-entry > *')?.style.display`)) !== 'none',
+    '侧栏关闭后入口按钮恢复显示');
 
   // 7. 导读页
   await evaluate(`location.hash = '#/guide/article-backprop'`);
   await sleep(800);
   const guide = await evaluate(`document.getElementById('app').textContent`);
-  ok(guide.includes('你可能需要先搞懂这') && guide.includes('偏导数') && guide.includes('流程模拟'),
-    '导读页渲染（含缺口提醒与发布流程模拟标注）');
+  ok(guide.includes('你可能需要先搞懂这') && guide.includes('偏导数') && guide.includes('存为我的笔记卡片') && guide.includes('导出 .md'),
+    '导读页渲染（含缺口提醒与笔记导出入口）');
 } catch (e) {
   fail++;
   console.error('E2E aborted:', e.message);

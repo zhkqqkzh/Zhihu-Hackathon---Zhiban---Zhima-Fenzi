@@ -7,7 +7,20 @@ const SCF_BASE = 'https://1399201542-7y33vuteqi.ap-beijing.tencentscf.com';
 const IS_LOCAL = typeof location !== 'undefined' &&
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
+// 线上（SCF）支持流式解释；本地 dev server 走一次性 mock/LLM
+export const STREAM_EXPLAIN = !IS_LOCAL;
+
+// 插件环境（内容脚本）：页面 CSP 拦截直连 fetch，统一经 background 转发（§14.1）。
+// 适配层注入 window.__ZB_TRANSPORT__ / __ZB_TRANSPORT_STREAM__；demo 站无此定义，走直连。
+const hasTransport = typeof window !== 'undefined' &&
+  typeof window.__ZB_TRANSPORT__ === 'function';
+
 async function post(path, body) {
+  if (hasTransport) {
+    const r = await window.__ZB_TRANSPORT__(path, body || {});
+    if (r && typeof r.error === 'string') throw new Error(r.error);
+    return r;
+  }
   const res = await fetch((IS_LOCAL ? './' : SCF_BASE + '/') + path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -18,16 +31,105 @@ async function post(path, body) {
 }
 
 // SCF /ask → 前端 explain 结构：context_why 映射为 in_context
-async function scfExplain(payload) {
-  const r = await post('ask', { term: payload.concept, context: payload.context || '' });
+function normalizeAsk(r) {
   return {
-    is_concept: true,
-    definition: r.definition || '',
+    is_concept: r.is_concept !== false,
+    // 只认字符串：模型偶尔把 definition 写成对象/数组，直接取用会在浮层里渲染出 [object Object]
+    definition: typeof r.definition === 'string' ? r.definition.trim() : '',
     in_context: r.context_why || r.in_context || '',
     prerequisites: Array.isArray(r.prerequisites) ? r.prerequisites.slice(0, 2) : [],
     quiz_question: r.quiz_question || '',
     quiz_points: Array.isArray(r.quiz_points) ? r.quiz_points : [],
   };
+}
+
+async function scfExplain(payload) {
+  const r = await post('ask', { term: payload.concept, context: payload.context || '' });
+  return normalizeAsk(r);
+}
+
+// SSE 增量解析器：feed 网络原文（可能是半个 chunk），逐行提取 choices[].delta.content。
+// 每拼出一个完整 delta 就 onRaw(累计模型原文)；遇 error 对象抛错。
+// 部分模型（如 glm-4.7-flashx）会先吐 reasoning_content 思考链：不计入原文，仅经 onThinking 通知。
+function makeSseParser(onRaw, onThinking) {
+  let buf = '';
+  let rawAll = '';
+  const self = function feed(text) {
+    buf += text;
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    let deltaAll = '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (t.indexOf('data:') !== 0) continue;
+      const data = t.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      let j = null;
+      try { j = JSON.parse(data); } catch { continue; } // 半个 chunk 的坏行直接跳过
+      if (j && j.error) throw new Error(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
+      const d = j && j.choices && j.choices[0] && j.choices[0].delta;
+      if (d && d.reasoning_content && onThinking) onThinking(d.reasoning_content);
+      const delta = (d && d.content) || (j && j.choices && j.choices[0] && j.choices[0].content);
+      if (delta) deltaAll += delta;
+    }
+    if (deltaAll) {
+      rawAll += deltaAll;
+      if (onRaw) onRaw(rawAll);
+    }
+  };
+  self.raw = () => rawAll;
+  return self;
+}
+
+// 流式解释（线上 SCF）：POST /ask {stream:true}，SSE 逐字接收。
+// onRaw(rawText) 每收到一个 content delta 回调一次（累计的模型原文 JSON 文本）。
+// 返回最终解析结果（与 scfExplain 同结构）。
+// 降级：插件经 background 转发（响应是普通 JSON 时按整包解析）；直连时按 Content-Type 判断。
+export async function scfExplainStream(payload, onRaw, onThinking) {
+  const askBody = { term: payload.concept, context: payload.context || '', stream: true };
+
+  // 插件环境：content → background → SCF，chunk 经端口实时回推
+  if (typeof window !== 'undefined' && typeof window.__ZB_TRANSPORT_STREAM__ === 'function') {
+    const parser = makeSseParser(onRaw, onThinking);
+    const netText = await window.__ZB_TRANSPORT_STREAM__('ask', askBody, (chunk) => parser(chunk));
+    const trimmed = netText.trim();
+    if (trimmed.charAt(0) === '{') {
+      // 函数/平台不支持流式：整包 JSON 直接解析
+      const r = JSON.parse(trimmed);
+      const data = normalizeAsk(r);
+      if (onRaw) onRaw(JSON.stringify(r));
+      return data;
+    }
+    const raw = parser.raw();
+    if (!raw) throw new Error('模型只返回了思考过程，没有输出解释内容');
+    return normalizeAsk(JSON.parse(raw));
+  }
+
+  const res = await fetch(SCF_BASE + '/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(askBody),
+  });
+  if (!res.ok) throw new Error(`api ${res.status}`);
+  const ct = res.headers.get('Content-Type') || '';
+  if (ct.indexOf('text/event-stream') < 0 || !res.body) {
+    // 平台不支持流式：整包 JSON 直接解析
+    const r = await res.json();
+    const data = normalizeAsk(r);
+    if (onRaw) onRaw(JSON.stringify(r));
+    return data;
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let rawAll = '';
+  const parser = makeSseParser((raw) => { rawAll = raw; if (onRaw) onRaw(raw); }, onThinking);
+  for (;;) {
+    const step = await reader.read();
+    if (step.done) break;
+    parser(dec.decode(step.value, { stream: true }));
+  }
+  if (!rawAll) throw new Error('模型只返回了思考过程，没有输出解释内容');
+  return normalizeAsk(JSON.parse(rawAll));
 }
 
 async function scfQuiz(payload) {
@@ -50,6 +152,9 @@ export const api = {
   prescan: (p) => post(IS_LOCAL ? 'api/prescan' : 'prescan', p),
   search: (p) => post(IS_LOCAL ? 'api/search' : 'search', p),
   quiz: (p) => (IS_LOCAL ? post('api/quiz', p) : scfQuiz(p)),
+  // 收藏夹体检（聚类 + 点评）：只服务插件版个人中心——demo 站拿不到知乎登录态，
+  // 本地 dev server 也没有对应 mock，所以不做 IS_LOCAL 分支，统一走 SCF。
+  analyzeCollections: (p) => post('collections', p),
 };
 
 // 线上模式追问问题懒加载：本地由 explain 返回，线上调 /quiz 生成

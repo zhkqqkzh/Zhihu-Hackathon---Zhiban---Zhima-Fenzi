@@ -5,13 +5,14 @@
 //   3. 资源基址：chrome.runtime.getURL
 //   4. SPA 路由监听与文章归属判定（§16）
 
-import { setStorageAdapter } from '../../demo/js/app/store.js';
+import { setStorageAdapter, saveArticleRecord } from '../../demo/js/app/store.js';
 import { ZHIHU_SELECTORS } from '../../demo/js/core/selectors.js';
 import { setPageContext, runtime } from '../../demo/js/app/runtime.js';
 import { initEntry } from '../../demo/js/app/entry.js';
 import { initSelection } from '../../demo/js/app/selection.js';
 import { initPrescan } from '../../demo/js/app/prescan.js';
 import { initQuiz } from '../../demo/js/app/quiz.js';
+import { initWeeklyReview } from '../../demo/js/app/weekly.js';
 
 // 1. 存储适配（异步接口，铁律 1）
 setStorageAdapter({
@@ -29,6 +30,30 @@ setStorageAdapter({
 // 2. API 传输层：content → background → 后端
 window.__ZB_TRANSPORT__ = (path, payload) =>
   new Promise((resolve) => chrome.runtime.sendMessage({ type: 'zb-api', path, payload }, resolve));
+
+// 2b. 流式传输层：content → background → 后端，chunk 经端口实时回推（SSE 网络原文）。
+// resolve 完整网络原文（SSE 或整包 JSON，由调用方识别降级）；reject 携带错误信息。
+window.__ZB_TRANSPORT_STREAM__ = (path, payload, onChunk) => new Promise((resolve, reject) => {
+  const port = chrome.runtime.connect({ name: 'zb-api-stream' });
+  let text = '';
+  let settled = false;
+  const finish = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+  port.onMessage.addListener((msg) => {
+    if (msg.type === 'chunk') {
+      text += msg.text;
+      try { onChunk(msg.text); } catch (e) { finish(reject, e); port.disconnect(); }
+    } else if (msg.type === 'end') {
+      // 先 settle 再断开：disconnect 会触发 onDisconnect，若先断开会被误判为 “stream channel closed”
+      finish(resolve, text);
+      port.disconnect();
+    } else if (msg.type === 'error') {
+      finish(reject, new Error(msg.error || 'stream error'));
+      port.disconnect();
+    }
+  });
+  port.onDisconnect.addListener(() => finish(reject, new Error('stream channel closed')));
+  port.postMessage({ type: 'zb-api-stream-start', path, payload });
+});
 
 // 3. 资源基址（看山 GIF、兜底样式表）。注意构建产物在 dist/ 下，路径必须带 dist/ 前缀，
 // 否则 chrome-extension://<id>/assets/... 指向扩展根目录（实际文件在 dist/assets/），GIF 会 404。
@@ -55,12 +80,18 @@ function setupPage() {
     return; // 列表页等无回答容器页面：等待下一次路由变化
   }
   const body = container.querySelector(ZHIHU_SELECTORS.articleBody) || container;
+  const articleId = articleIdOf(container);
   setPageContext({
     article: { title: document.title },
-    articleId: articleIdOf(container),
+    articleId,
     container,
     body,
     selectors: ZHIHU_SELECTORS,
+  });
+  // 存下标题：个人中心的学习足迹要写「在《…》学过」，而回答 ID 是机器串（zhihu-answer-xxx）
+  saveArticleRecord(articleId, {
+    title: document.title.replace(/\s*[-–—]\s*知乎\s*$/, ''),
+    link: location.href.split('?')[0],
   });
 }
 
@@ -96,6 +127,7 @@ initEntry();
 initSelection();
 initPrescan();
 initQuiz();
+initWeeklyReview(); // 每周复盘：零操作推到常驻入口/侧栏，纯本地数据
 
 // 知乎回答流是懒加载的：轮询等容器出现（每次路由变化后重置）
 let tries = 0;

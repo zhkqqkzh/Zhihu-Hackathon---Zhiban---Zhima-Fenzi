@@ -9,6 +9,7 @@ export function parseRoute() {
   if (parts[0] === 'article' && parts[1]) return { name: 'article', id: parts[1] };
   if (parts[0] === 'igloo') return { name: 'igloo' };
   if (parts[0] === 'hub') return { name: 'hub' };
+  if (parts[0] === 'profile') return { name: 'profile' };
   if (parts[0] === 'guide' && parts[1]) return { name: 'guide', id: parts[1] };
   return { name: 'home' };
 }

@@ -56,12 +56,17 @@ function fmtTime(ts) {
 }
 
 function articleTitle(id) {
-  return ARTICLE_BY_ID.get(id)?.title || id || '原文';
+  const override = typeof window !== 'undefined' ? window.__ZB_ARTICLE_TITLE__ : null;
+  const custom = typeof override === 'function' ? override(id) : '';
+  return custom || ARTICLE_BY_ID.get(id)?.title || id || '原文';
 }
 
-// 跳回原文锚点（卖点 1：scrollIntoView + 高亮）
+// 跳回原文锚点（卖点 1：scrollIntoView + 高亮）。
+// 独立页（如扩展内个人中心）跨文档跳不了锚点，由 __ZB_GOTO_ANCHOR__ 接管（§适配层）。
 export function gotoAnchor(articleId, anchor) {
   if (!articleId) return;
+  const override = typeof window !== 'undefined' ? window.__ZB_GOTO_ANCHOR__ : null;
+  if (typeof override === 'function') { override(articleId, anchor); return; }
   if (anchor && anchor.paragraphIndex != null) {
     requestAnchorJump({ articleId, anchor });
   }
@@ -69,14 +74,15 @@ export function gotoAnchor(articleId, anchor) {
 }
 
 // ============ 区块1：思维导图 ============
-function renderGraphSection(concepts, root) {
+// onRefresh：刷新按钮的行为可覆盖（个人中心里需要重绘当前模块，而不是整体切到 hub 页）
+export function renderGraphSection(concepts, root, onRefresh) {
   const sec = el('div', { class: 'hub-section' }, [
     el('div', { style: 'display:flex;align-items:baseline;justify-content:space-between' }, [
       el('div', {}, [
         el('h2', { text: '🧠 思维导图' }),
         el('div', { class: 'hint', text: '你学过的概念与它们之间的依赖。红色是「缺口」——某概念需要它，但你还没学过。' }),
       ]),
-      el('button', { class: 'hub-refresh', text: '刷新', onclick: () => renderHub(root) }),
+      el('button', { class: 'hub-refresh', text: '刷新', onclick: () => (onRefresh || renderHub)(root) }),
     ]),
     el('div', { class: 'hub-legend' }, [
       el('span', {}, [el('i', { style: 'background:#3aa655' }), '学过 ≥2 篇']),
@@ -319,7 +325,7 @@ async function tryPolishSummary(diag, box) {
 }
 
 // ============ 区块3：最近学习时间轴 ============
-function renderTimelineSection(concepts, root) {
+export function renderTimelineSection(concepts, root) {
   const sec = el('div', { class: 'hub-section' }, [
     el('h2', { text: '🕐 最近学习' }),
     el('div', { class: 'hint', text: '按学习时间倒序，最近 20 条。点击卡片回到原文位置。' }),

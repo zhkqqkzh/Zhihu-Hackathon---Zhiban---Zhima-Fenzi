@@ -1,43 +1,63 @@
-# 知伴 · 和看山一起读
+# 知伴 · 读不懂，划一下，当场讲明白
 
 > 知乎黑客松 2026 · 校园新锐季 —— 知识炼金场赛道
 >
-> 读知乎遇到不懂的概念，**划一下**，当场在这篇回答的语境里讲明白。
-> 每一次追问都会留下痕迹——单篇内汇成**我的短尾巴**，跨篇连成有方向的依赖链**去看山**；
-> 走到最后，这些痕迹会长成一篇**导读**，你改一改、署上名发出去：**被卡住的读者，成了下一篇回答的作者。**
+> 读知乎遇到不懂的概念，**划一下**，当场在这篇回答的语境里讲明白；
+> 你划过的、卡住的，它替你记着——**不用你主动打开任何中心页面，价值自己找上门**。
+> 想留下点什么，一键存成笔记卡片、导出成 Markdown。
+>
+> 「知识炼金场」只是赛道标签，产品只做一件事：**把读不懂的那一下，当场讲明白。**
 
 ---
 
-## 一、功能总览（11 个功能）
+## 一、功能总览（按优先级）
 
-| # | 功能 | 说明 | 主要代码 |
-|---|---|---|---|
-| 1 | 选中即问 | 划选概念 → 弹「问知伴」→ 三层解释（一句话定义 / 为什么在这篇里重要 / 你可能需要先了解） | `demo/js/app/selection.js` `popup.js` |
-| 2 | 前置知识跳转 | 前置概念的一句话解释 + 站内高赞回答（赞数排序、超长降权） | `popup.js` + SCF `/search` |
-| 3 | 全文概念标记 | 关浮层后整篇难词淡色波浪线浮现（原生自定义高亮，零 DOM 变更） | `demo/js/core/highlight.js` |
-| 4 | 本篇概念地图（我的短尾巴） | 侧栏展示本篇概念与已展开状态，角标计数 | `demo/js/app/sidebar.js` |
-| 5 | 去看山 | 跨篇依赖链：营地按掌握状态着色，终点是那座还没登上的山 | `demo/js/app/chain.js` |
-| 6 | 前置知识导读 | 本篇展开 3 个概念后自动生成；含"⚠️ 你可能还缺、但没问到的一环"（缺口只取 Top 1） | `demo/js/app/guide.js` |
-| 7 | 看山提问 | 读完后看山反过来提问；判定 → 营地变色（已走过/有点模糊/还没走过） | `demo/js/app/quiz.js` |
-| 8 | 短尾巴回访 | 间隔重复 1→3→7→15 天，忘了重置；零模型调用 | `demo/js/core/srs.js` `demo/js/app/revisit.js` |
-| 9 | 难度预告 | 打开新回答先预告陌生概念占比，三档文案；零模型调用 | `demo/js/core/difficulty.js` |
-| 10 | 看山策展 | 读 3 篇以上同主题回答，按依赖顺序串成《我的机器学习入门路径》 | `demo/js/app/curation.js` |
-| 11 | 冰屋 | 总览：短尾巴、掌握率、读过的回答、导读、策展 | `demo/js/app/igloo.js` |
+> **一个瞬间价值做到极致，其余全部可降级。** P0 不依赖任何知乎接口，无扩展注入也能 100% 工作。
 
-配套：常驻入口（首访引导、可永久关闭）、数据控制（本地存储声明 + 一键删除）。
+### 目标用户与场景边界（诚实定位）
+
+- **目标用户**：桌面端深度阅读者。产品以 **Chrome 扩展**形态交付，在知乎网页上提供选中即问、全文标记与被动复盘；Demo 站用于无扩展环境下演示同一套核心能力。
+- **已知边界（移动端）**：知乎的阅读主场景在手机，而移动端无法承载扩展与划选交互，这是形态天花板。本仓库**不在移动端提供覆盖**；若后续要做移动，需另立形态（小程序 / 公众号）单独规划，不在本仓库主路径内。
+- 我们不声称「覆盖所有阅读场景」——把桌面深度阅读这一件事做到极致，是本项目的取舍。
+
+### P0 · 必做，且做到极致
+
+| 功能 | 说明 | 主要代码 |
+|---|---|---|
+| **选中即问** | 划选概念 → 弹「问知伴」→ 当场讲三层：一句话定义 / 为什么在这篇里重要 / 你可能需要先了解 | `demo/js/app/selection.js` `popup.js` `api.js` + SCF `/ask` |
+| 前置知识跳转（可选增强） | 前置概念的一句话解释 + 站内热门回答；未配置知乎密钥或调用失败时**静默降级**，不影响选中即问 | `popup.js` + SCF `/search` |
+
+### P1 · 顺手，被动沉淀
+
+| 功能 | 说明 | 主要代码 |
+|---|---|---|
+| **全文概念标记** | 打开文章即预扫描，整篇难词淡色波浪线浮现（原生自定义高亮，零 DOM 变更） | `demo/js/core/highlight.js` + `demo/js/app/prescan.js` |
+| **每周复盘（被动推送）** | 不打开任何中心页面，距上次复盘 ≥7 天时自动在常驻入口 / 侧栏推一张极简复盘卡：本周卡住几个、掌握率、最该补的 3 个概念。零配置、纯本地、不调模型 | `demo/js/core/review.js` `demo/js/app/weekly.js` |
+| **我的笔记卡片（真实出口）** | 单概念 / 导读都可「存为我的笔记卡片」，本地存储，一键导出 `.md`；含概念 / 定义 / 本篇语境 / 原文引用 / 来源链接 / 时间戳 | `demo/js/core/note.js` `demo/js/app/notes.js` |
+
+### P2 · 降级 / 后续 / 仅留入口
+
+以下功能**已从 MVP 主路径撤下**，Demo 首屏不再突出；路由与实现保留，供后续按需恢复：
+
+短尾巴（`sidebar.js`）、学习中心图谱与诊断（`hub.js` + `core/graph.js`，现作为每周复盘的**展开详情**）、导读（`guide.js`）、SRS 回访（`core/srs.js` + `revisit.js`）、看山策展（`curation.js`）、冰屋（`igloo.js`）、个人中心与收藏体检（`profile.js` + `extension/src/profile-zhihu.js`，依赖知乎登录态，未配置即降级）。
+
+配套：常驻入口（首访引导 + 每周复盘推送）、侧栏入口按钮（随侧栏开合显隐）、数据控制（本地存储声明 + 一键删除）。
 
 ## 二、架构
 
 ```
-┌─────────────┐   fetch/messaging   ┌──────────────────┐   HTTPS   ┌────────────┐
-│ 交付形态     │ ──────────────────→ │  腾讯云 SCF       │ ────────→ │ 智谱 GLM    │
-│ · Chrome 插件│                     │  /ping /ask      │           │ glm-4.5-air│
-│ · 静态 Demo站│                     │  /prescan        │ ────────→ ├────────────┤
-└─────────────┘                     │  /search /quiz   │           │ 知乎搜索 API│
-        所有用户数据只存浏览器本地     └──────────────────┘           └────────────┘
+┌─────────────┐   fetch/messaging   ┌──────────────────┐   HTTPS   ┌──────────────┐
+│ 交付形态     │ ──────────────────→ │  腾讯云 SCF       │ ────────→ │ 智谱 GLM      │
+│ · Chrome 插件│                     │  /ping /ask      │           │glm-4.7-flashx│
+│ · 静态 Demo站│                     │  /prescan /search│ ────────→ ├──────────────┤
+└─────────────┘                     │  /quiz           │           │ 知乎开放平台  │
+        所有用户数据只存浏览器本地     │  /collections    │           └──────────────┘
+                                    └──────────────────┘
 ```
 
 - **没有数据库、没有自有服务器**。模型密钥与知乎密钥只在 SCF 环境变量里。
+- **知乎接口只是可选增强，不是核心依赖**：`/search`（前置跳转）、`/collections`（收藏体检）在未配置 `ZHIHU_ACCESS_SECRET`、或浏览器无扩展注入、或调用失败时**一律静默降级**；P0 选中即问与 P1 全文标记仅需页面文本 + LLM，完全不依赖知乎接口。
+- `/ask` 支持 `stream:true`：SCF 把 GLM 的 SSE 增量原样透传，前端边收边渲染（含 `reasoning_content` 思考链处理）。
 - 前端双模式：页面跑在 `localhost/127.0.0.1` 时走本地 dev server（mock 数据，零配置开发）；
   其他环境自动切到 SCF 线上接口（`demo/js/app/api.js` 顶部 `SCF_BASE` 常量）。
 - 插件环境：content script 被知乎 CSP 限制，请求经 `chrome.runtime` 消息转发到 background 再发真实请求。
@@ -50,19 +70,39 @@
 │   ├── assets/            # 样式 + 刘看山动态素材（本地自托管）
 │   └── js/
 │       ├── core/          # ★ 环境无关共享模块（全部关键算法，纯函数可单测）
-│       ├── app/           # 应用层（页面、浮层、侧栏、各功能）
+│       │                  #   match / textnodes / highlight / context / graph / srs / difficulty / stopwords / quote / selectors / storage / note / review
+│       ├── app/           # 应用层
+│       │   ├── main.js        # 壳 + 路由分发 + 顶栏导航
+│       │   ├── router.js      # hash 路由：#/ #/article/:id #/igloo #/guide/:id #/hub #/profile
+│       │   ├── selection.js   # 划词（含多回答容器重解析）/ popup.js 浮层 / sidebar.js 侧栏
+│       │   ├── prescan.js / guide.js / quiz.js / revisit.js / curation.js
+│       │   ├── home.js        # 首页开场导读 / entry.js 常驻入口
+│       │   ├── igloo.js       # 冰屋总览
+│       │   ├── hub.js         # 学习中心（思维导图 / 诊断 / 时间轴）
+│       │   ├── profile.js     # 个人中心（首页 / 收藏体检 / 推荐阅读 / 学习数据）
+│       │   ├── api.js         # 前端 API 层（本地 dev server ↔ SCF + SSE 解析）
+│       │   ├── store.js       # 数据层（异步存储适配，键前缀 zb:）
+│       │   └── ui.js / runtime.js / sample.js
 │       └── data/          # 3 篇互链 ML 文章（反向传播→梯度下降→导数）
 ├── server/                # 本地 dev server：静态托管 + 四接口 + mock 模型
+│   ├── index.js           #   /api/explain /api/prescan /api/search /api/quiz
+│   ├── handlers/          #   四个接口各一文件（explain / prescan / search / quiz）
+│   └── config.js / mock.js / llm.js / prompts.js / ratelimit.js
 ├── scf/                   # ★ 生产后端：腾讯云 SCF Web 函数（Node 12 兼容）
-│   ├── index.js           #   /ping /ask /prescan /search /quiz
+│   ├── index.js           #   /ping /ask /prescan /search /quiz /collections
 │   ├── scf_bootstrap      #   自定义运行时启动脚本（0755）
 │   └── package.json       #   仅声明 express 依赖
 ├── extension/             # Chrome MV3 插件（最终形态）
-│   ├── manifest.json
-│   ├── src/               # content（知乎适配层）+ background（请求中转）
+│   ├── manifest.json      #   MV3；permissions: storage；host: 知乎 + *.tencentscf.com
+│   ├── src/
+│   │   ├── content.js         # 知乎适配层（CSP 绕行、划词、SPA 归属判定）
+│   │   ├── background.js      # 请求中转 + 知乎 API 白名单转发 + 流式端口
+│   │   ├── profile-page.js    # 个人中心独立页（注入存储适配/锚点跳转）
+│   │   └── profile-zhihu.js   # 知乎账号卡 + 收藏夹体检 + 分类树
+│   ├── profile.html       # 个人中心独立页
 │   ├── build.mjs          # esbuild 打包（MV3 禁远程代码，全部本地打包）
 │   └── dist/              # 构建产物（git 忽略，npm run build:ext 生成）
-├── scripts/               # 校验与测试（check-syntax / check-imports / test-core / test-api / test-e2e）
+├── scripts/               # 校验与测试（check-syntax / check-imports / test-core / test-hub / test-api / test-e2e）
 └── package.json
 ```
 
@@ -75,7 +115,7 @@ npm install          # 仅开发依赖（esbuild/express）；运行时零三方
 npm run dev          # http://localhost:8787
 
 # 本地接真实模型（可选）
-export LLM_API_KEY=xxx LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4 LLM_MODEL=glm-4.5-air
+export LLM_API_KEY=xxx LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4 LLM_MODEL=glm-4.5-flash
 # 本地知乎搜索（可选）
 export ZHIHU_ACCESS_SECRET=xxx
 ```
@@ -93,11 +133,14 @@ export ZHIHU_ACCESS_SECRET=xxx
 
 ```bash
 npm run check        # 全量 JS 语法（node --check）+ 模块导入解析（路径/具名/默认导出）
-npm run test:core    # 核心算法 39 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
-                     # 边加权/缺口Top1/聚类/策展排序/回访间隔/难度三档/停用词拦截
+npm run test:core    # 核心算法 63 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
+                     # 边加权/缺口Top1/聚类/策展排序/回访间隔/难度三档/停用词拦截/
+                     # 每周复盘（7 天触发口径/掌握率/Top 缺口）/笔记 Markdown 生成（文件名清洗/时间戳）
+npm run test:hub     # 学习中心 23 项：buildHubGraph 节点/边方向/缺口判定/三色计数/
+                     # 主题归类/诊断总结/薄弱主题 TOP3/建议补概念/空数据兜底
 npm run test:api     # 后端 22 项：四接口结构/字段零缺失/400/限流429/CORS/目录穿越
-npm run test:e2e     # 端到端 14 项：Edge 无头 + CDP 真实划选→浮层三层解释→选「的」不弹窗→
-                     # 示例数据→冰屋/策展/去看山拓扑序/实线边/导读页
+npm run test:e2e     # 端到端 17 项：Edge 无头 + CDP 真实划选→浮层三层解释（含前置）→选「的」不弹窗→
+                     # 浮层不因清除选区而关闭→示例数据→侧栏短尾巴/入口显隐/导读页（含笔记导出入口）
 npm run build:ext    # 插件打包到 extension/dist
 ```
 
@@ -123,6 +166,10 @@ Base：`https://<你的云函数域名>`（当前开发环境地址写在 `demo/
 ```
 前端在 `api.js` 中把 `context_why` 映射为 `in_context`。**不要改 prompt 模板里的字段名**，否则前端映射失效。
 
+**流式模式**：请求体加 `"stream": true`，响应 `Content-Type: text/event-stream`，SCF 原样透传 GLM 的 SSE；
+前端 `scfExplainStream` + SSE 解析器边收边渲染，`reasoning_content`（思考链）不计入正文，仅通知 UI。
+线上默认走流式（`STREAM_EXPLAIN`），本地 dev server 走一次性响应。
+
 ### POST /prescan —— 全文概念预扫描
 请求：`{ "text": "正文前 8000 字", "articleId": "xxx" }`
 响应：`{ "concepts": ["反向传播", "梯度下降", "…"] }`（5–15 个，逐字照抄正文）
@@ -140,6 +187,13 @@ Base：`https://<你的云函数域名>`（当前开发环境地址写在 `demo/
 判定回答：请求 `{ "concept": "…", "quote": "…", "question": "…", "answer": "用户回答" }`
 响应：`{ "verdict": "correct|partial|wrong", "feedback": "看山口吻的补充解释" }`
 
+### POST /collections —— 收藏夹体检
+请求：`{ "items": [{ "title": "…", "excerpt": "…", "score": 0 }] }`（最多取 20 条；服务端只消费 `title`/`excerpt`/`score`）
+响应：`{ "groups": [{ "name": "主题名", "items": ["标题"] }], "reviews": [{ "title": "…", "level": "…", "comment": "…" }] }`（`groups` 中只保留输入里真实存在的标题）
+聚类 + 点评，模型输出上限 1200 token；规则打分（满分 10）在客户端做，失败时降级返回空结果。**仅 SCF 提供**（本地 dev server 无此路由）：读取知乎登录态收藏夹依赖插件环境，
+`extension/src/background.js` 的 `ZHIHU_API_ALLOW` 白名单转发知乎 web API（`/api/v4/me`、`members|people/.../collections`、
+`collections/.../items`），前端 `api.analyzeCollections` 调用。
+
 ### 错误约定
 | 场景 | 状态码 |
 |---|---|
@@ -155,12 +209,13 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 | 键 | 内容 |
 |---|---|
 | `zb:article:<id>` | 文章记录：标题/链接、已展开概念、预扫描缓存标记、提问记录、阅读进度 |
-| `zb:concept:<名>` | 概念记录：定义/本篇语境/前置数组/原文引用/站内链接/掌握状态/首次来源/askedIn/回访状态 |
+| `zb:concept:<名>` | 概念记录：定义/本篇语境/前置数组/原文引用/站内链接/掌握状态/首次来源/回访状态，以及 `firstAskedAt`（首次问时间）、`anchors`（每次新语境追加的锚点 `{articleId, paragraphIndex, startOffset, endOffset, at}`，供学习中心跳回原文高亮） |
 | `zb:prescan:<id>` | 预扫描词表缓存（同篇不重复烧） |
 | `zb:answer:<文章id>:<词>` | 问答结果缓存（防现场连点触发限流） |
 | `zb:links:<名>` | 站内链接缓存 |
 | `zb:guide:<文章id>` | 生成的导读（含缺口提醒） |
-| `zb:meta` | 首访引导等元信息 |
+| `zb:note:<id>` | 我的笔记卡片（单概念 / 导读）：概念、定义、本篇语境、原文引用、来源链接、编辑后正文、时间戳；导出 `.md` 的数据源 |
+| `zb:meta` | 首访引导等元信息，以及 `lastReviewAt`（上次每周复盘时间，用于 7 天触发口径） |
 
 掌握状态三档：`unvisited`（还没走过）→ `fuzzy`（有点模糊）→ `passed`（已走过）。
 
@@ -176,19 +231,25 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 | 依赖边 / 白名单过滤（泛化父概念回退）/ 边加权（双篇验证才实线）/ 缺口 Top 1 | `demo/js/core/graph.js` |
 | 拓扑排序与策展排序 | `demo/js/core/graph.js` |
 | 主题聚类（Jaccard 并查集传递闭包，阈值 0.1） | `demo/js/core/graph.js` |
+| 学习中心图谱（三色节点：绿=多篇文章学过 / 黄=学过一篇 / 红=缺口前置） | `buildHubGraph`，`demo/js/core/graph.js` |
+| 诊断报告（主题归类 `TOPIC_LEXICON`/`topicOf` + 薄弱主题 TOP3 + 建议补概念 TOP3） | `computeDiagnosis`，`demo/js/core/graph.js` |
+| 锚点回原文（段落索引 + 段内偏移 → DOM Range 并高亮） | `anchorToRanges`，`demo/js/app/store.js` |
+| 多回答划词（选区不在当前容器时按 `closest(articleContainer)` 重解析并回写 `runtime.page`） | `demo/js/app/selection.js` |
 | 回访间隔（1→3→7→15，忘了重置） | `demo/js/core/srs.js` |
 | 原文引用扩句 | `demo/js/core/quote.js` |
 | 难度预告（交集/差集，零模型调用） | `demo/js/core/difficulty.js` |
 | 非概念三层拦截（⚠️ 绝不用"长度>2字"） | `demo/js/core/stopwords.js` |
 | 人格分层（定义层人格浓度为零） | prompt 见 `scf/index.js` / `server/prompts.js` |
 | SPA 路由监听 + 归属判定（URL→容器属性→页面地址） | `extension/src/content.js` |
+| 每周复盘触发口径（距上次 ≥7 天，首次以最早记录为基线）/ 最该补 Top3 / 掌握率 | `demo/js/core/review.js`（纯函数） |
+| 笔记 → Markdown（概念/导读两种模板、文件名清洗、时间戳） | `demo/js/core/note.js`（纯函数） |
 
 ## 八、部署
 
 ### 8.1 SCF 云函数
 1. 函数配置 → 上传 `scf/zhiban-scf.zip`（zip 根目录必须含 `scf_bootstrap`/`index.js`/`package.json`/`node_modules`，正斜杠路径；重新打包脚本见 git 历史或按 `extension/build.mjs` 同款 Python zipfile 方式）
 2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）；执行超时 **60 秒**
-3. 自测：`GET /ping` → `POST /ask`
+3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections`
 
 ### 8.2 静态 Demo 站（可选交付）
 COS 桶开静态网站，上传 `demo/`（保持相对路径）。部署四约束：hash 路由 ✓、相对路径 ✓、函数超时 60s ✓、全链路 HTTPS + CORS ✓。
@@ -211,17 +272,21 @@ background 的 API 地址与 `demo/js/app/api.js` 的 `SCF_BASE` 保持同步。
 
 ### 新增一个前端功能
 挂在 `runtime.on('concept:expanded')` / `prescan:done` 等事件上（见 `demo/js/app/runtime.js`），数据一律经 `store.js` 读写。
+纯算法放 `demo/js/core/`（不碰 DOM/localStorage，纯函数），并补 `npm run test:core` 或 `npm run test:hub` 断言。
+新增路由时在 `demo/js/app/router.js` 注册，并在 `demo/js/app/main.js` 的 `dispatch` 里分发页面。
 
 ## 十、已知限制与 TODO
 
-- **发布是流程模拟**：知乎官方接口只读，导读"发布"= 生成 → 编辑 → 署名 → 复制剪贴板 → 用户自行发布（界面已标注）。
+- **创作出口是「真笔记」，不是「发回答」**：知乎官方接口只读，无法代发。导读 / 单概念均「存为我的笔记卡片」并导出 `.md`（本地存储、零接口依赖），何时分享由用户决定；界面不再有任何「模拟发布」文案。
+- **知乎接口为可选增强**：未配置 `ZHIHU_ACCESS_SECRET`、或浏览器无扩展注入、或调用失败时，`/search`、`/collections` 静默降级，P0/P1 全功能不受影响（见 §一「目标用户与场景边界」）。
 - **前置概念已知代价**：为保依赖链呈链状而非网状，prompt 把前置压到 ≤2 个、宁缺毋滥；部分概念的真实多前置被压缩（方案 §11.4 接受的代价）。
 - **仅摘要**：知乎接口只返回内容摘要，高亮标签渲染前必须白名单清洗（`api.js` `sanitizeHtml`，禁止 innerHTML 直写）。
 - **刘看山素材**：用户提供的动态 GIF，仅本地自托管使用；正式商用需确认授权（方案原文为"仅使用人设与口吻"）。
 - **安全**：密钥只走环境变量；建议智谱控制台设消费硬上限（唯一真正的金钱防线）；泄露过的密钥及时重置。
+- **收藏夹体检依赖插件环境**：需读知乎登录态，Demo 站（无扩展注入）只给出引导文案，完整体检在扩展版个人中心查看。
 - **未做**：难度预告与短尾巴回访已在 Demo 站实现但未进 SCF（零模型调用、纯前端，不受后端影响）；移动端划选不可行（形态天花板）。
 
 ---
 
-> 追问的终点不是一张卡片，是一篇新的回答。
-> 而路上留下的每一处痕迹，都不是缺口——**那是你的短尾巴。**
+> 读不懂，划一下，当场讲明白；你忘了，它替你记着。
+> 想留下点什么，就存成一张笔记卡片——**真实的笔记，不是模拟的发布。**

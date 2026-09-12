@@ -3,7 +3,7 @@
 //   《读这篇回答前，你可能需要先搞懂这 N 件事》
 //   每个概念 = 一句话解释 + 它在原文里那句话 + 站内高赞回答链接
 //   ⚠️ 你可能还缺、但没问到的一环：XXX（缺口只取 Top 1，§11.8）
-// 技术边界（§四-6）：官方接口无写入能力，发布为流程模拟：生成 → 编辑 → 署名 → 复制 → 自行发布。
+// 创作出口（计划书第 4/7 条）：导读可「存为我的笔记卡片」并导出 .md，本地存储、零接口依赖。
 
 import { el, toast } from './ui.js';
 import * as store from './store.js';
@@ -11,6 +11,7 @@ import { api, zhihuSearchUrl } from './api.js';
 import { buildEdges, detectGap } from '../core/graph.js';
 import { ARTICLE_BY_ID } from '../data/articles.js';
 import { navigate } from './router.js';
+import { saveNote, exportNote } from './notes.js';
 
 const TRIGGER_COUNT = 3;
 
@@ -61,12 +62,12 @@ export async function getGuideTrigger(articleId) {
   if (existing) return existing;
   const guide = await buildGuide(articleId);
   if (guide) {
-    toast('看山：你已经在这一篇问了 3 个概念。导读长出来了——去改一改，署上你的名。', 5200);
+    toast('看山：你已经在这一篇问了 3 个概念。导读长出来了——可以存成你自己的笔记卡片。', 5200);
   }
   return guide;
 }
 
-// 页面：# /guide/:id —— 导读编辑 + 署名发布（模拟）
+// 页面：# /guide/:id —— 导读笔记卡片（本地存 + 导出 .md）
 export async function renderGuide(app, articleId) {
   const guide = await store.getGuide(articleId);
   if (!guide) {
@@ -79,7 +80,7 @@ export async function renderGuide(app, articleId) {
   }
   const wrap = el('div', { class: 'HomeGuide' });
   wrap.append(el('h2', { text: `《读「${guide.title}」前，你可能需要先搞懂这 ${guide.items.length} 件事》` }));
-  wrap.append(el('div', { class: 'lead', text: '主体内容来自原文引用与知乎站内优质回答，模型只做串联。发布时默认带「AI 辅助」标签。' }));
+  wrap.append(el('div', { class: 'lead', text: '主体内容来自原文引用与站内参考，模型只做串联。可以逐段改，改完存成你自己的笔记卡片。' }));
 
   const listBox = el('div', {});
   for (const item of guide.items) {
@@ -87,7 +88,7 @@ export async function renderGuide(app, articleId) {
     listBox.appendChild(el('div', { class: 'GuideItem' }, [
       el('div', { class: 'gi-head', text: item.name }),
       ta,
-      item.link ? el('a', { class: 'gi-link', href: item.link, target: '_blank', rel: 'noopener', text: '→ 站内高赞回答' }) : null,
+      item.link ? el('a', { class: 'gi-link', href: item.link, target: '_blank', rel: 'noopener', text: '→ 站内参考' }) : null,
     ]));
   }
   if (guide.gap) {
@@ -95,26 +96,34 @@ export async function renderGuide(app, articleId) {
   }
   wrap.appendChild(listBox);
 
-  const nameInput = el('input', { class: 'guide-name', placeholder: '署上你的名（知乎昵称）', value: '' });
-  const publishBtn = el('button', {
-    class: 'zb-btn', text: '复制到剪贴板，去知乎发布（流程模拟）',
-    onclick: async () => {
-      const parts = [`《读「${guide.title}」前，你可能需要先搞懂这 ${guide.items.length} 件事》`, ''];
-      for (const ta of listBox.querySelectorAll('textarea')) parts.push(ta.value, '');
-      if (guide.gap) parts.push(`⚠️ 你可能还缺、但没问到的一环：${guide.gap}`, '');
-      const name = nameInput.value.trim();
-      parts.push(`—— 由 ${name || '一位读者'} 整理 · AI 辅助`);
-      try {
-        await navigator.clipboard.writeText(parts.join('\n'));
-        toast('已复制。官方接口暂不支持直接发布：在知乎粘贴、修改、署你的名，发出去。被卡住的读者，成了下一篇回答的作者。', 6500);
-      } catch {
-        toast('复制失败，请手动全选复制。', 3000);
-      }
-    },
+  // 收集当前编辑框内容 → 笔记对象；saved 由 store.saveNote 生成并复用，避免每点一次多一条。
+  const art = await store.getArticleRecord(articleId);
+  let saved = null;
+  const collectNote = () => {
+    const tas = [...listBox.querySelectorAll('textarea')];
+    return {
+      kind: 'guide',
+      articleId,
+      title: guide.title,
+      url: art?.link || '',
+      gap: guide.gap || '',
+      createdAt: saved?.createdAt,
+      id: saved?.id,
+      items: guide.items.map((item, i) => ({ name: item.name, link: item.link, text: tas[i]?.value || '' })),
+    };
+  };
+
+  const saveBtn = el('button', {
+    class: 'zb-btn', text: '存为我的笔记卡片',
+    onclick: async () => { saved = await saveNote(collectNote()); },
+  });
+  const exportBtn = el('button', {
+    class: 'zb-btn', text: '导出 .md',
+    onclick: async () => { saved = await exportNote(collectNote(), guide.title); },
   });
   wrap.appendChild(el('div', { style: 'margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, [
-    nameInput, publishBtn,
+    saveBtn, exportBtn,
   ]));
-  wrap.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin-top:10px', text: '技术边界：官方接口仅提供内容读取，发布为流程模拟（生成 → 编辑 → 署名 → 复制 → 用户自行发布）。' }));
+  wrap.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin-top:10px', text: '笔记只存在这个浏览器里，导出的是标准 Markdown 文件；知伴不上传内容，也不代你发布。' }));
   app.replaceChildren(wrap);
 }

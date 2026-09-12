@@ -7,9 +7,10 @@ import { shadowRoot, el, toast, assetUrl } from './ui.js';
 import { runtime } from './runtime.js';
 import * as store from './store.js';
 import { ensurePrescan, refreshHighlights } from './prescan.js';
-import { renderChain } from './chain.js';
 import { renderQuizTab } from './quiz.js';
 import { loadSample, confirmClear } from './sample.js';
+import { navigate } from './router.js';
+import { computeWeeklyReview, hasUnseenReview, ackReview } from './weekly.js';
 
 const CSS = `
 :host { all: initial; }
@@ -28,6 +29,8 @@ const CSS = `
 .zb-head .t { font-size: 15px; font-weight: 700; flex: 1; }
 .zb-badge { background: #056de8; color: #fff; font-size: 11px; border-radius: 10px; padding: 2px 8px; }
 .zb-x { border: 0; background: none; font-size: 18px; color: #8590a6; cursor: pointer; }
+.zb-profile-btn { border: 1px solid #e0e5ee; background: #fff; padding: 4px 10px; font-size: 12px; color: #056de8; border-radius: 6px; cursor: pointer; margin-left: 6px; }
+.zb-profile-btn:hover { background: #f0f5ff; }
 .zb-tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid #f0f0f0; }
 .zb-tab { border: 0; background: none; padding: 8px 10px; font-size: 13px; color: #666; cursor: pointer; border-bottom: 2px solid transparent; }
 .zb-tab.on { color: #056de8; border-bottom-color: #056de8; font-weight: 600; }
@@ -41,6 +44,39 @@ const CSS = `
 .zb-btnrow { display: flex; gap: 8px; padding: 8px 16px 12px; }
 .zb-btnrow button { flex: 1; font-size: 12px; padding: 7px 0; border-radius: 8px; border: 1px solid #e0e5ee; background: #fff; cursor: pointer; color: #444; }
 .zb-btnrow .danger { color: #c33; border-color: #f0caca; }
+/* 看山提问（§10.8）：卡片渲染在 Shadow DOM 内，样式必须写在隔离样式表里——
+   zhiban.css 是文档级皮肤，只在旧内核 link 降级时才会进到 shadow root。 */
+.zb-quiz { border: 1px solid #e7e7e7; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.zb-quiz-concept { font-size: 12px; color: #8590a6; margin-bottom: 4px; }
+.zb-quiz-q { font-size: 14px; font-weight: 600; line-height: 1.6; margin-bottom: 8px; }
+.zb-quiz-a {
+  width: 100%; min-height: 68px; font-size: 13px; line-height: 1.6; padding: 9px 11px;
+  border: 1px solid #e0e5ee; border-radius: 8px; resize: none; font-family: inherit;
+  box-sizing: border-box; outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.zb-quiz-a:focus { border-color: #056de8; box-shadow: 0 0 0 3px rgba(5, 109, 232, .1); }
+.zb-quiz-a::placeholder { color: #b3bac6; }
+.zb-quiz-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.zb-quiz-submit {
+  background: #056de8; color: #fff; border: 0; border-radius: 8px;
+  padding: 7px 22px; font-size: 13px; line-height: 1.4; cursor: pointer;
+}
+.zb-quiz-submit:hover { background: #0358bd; }
+.zb-quiz-verdict { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.zb-quiz-verdict.v-correct { color: #3aa655; }
+.zb-quiz-verdict.v-partial { color: #d67a27; }
+.zb-quiz-verdict.v-wrong { color: #c33; }
+.zb-quiz-feedback { font-size: 13px; line-height: 1.7; color: #444; }
+.zb-quiz-again { margin-top: 8px; background: none; border: 1px solid #e0e5ee; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; color: #666; }
+/* 每周复盘（计划书第 3 条）：原学习中心里的图谱/诊断在这里作为复盘卡片的展开详情。 */
+.zb-tab { padding: 8px 9px; }
+.zb-tab .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #f5222d; margin-left: 4px; vertical-align: top; }
+.zb-rev-card { border: 1px solid #e7e7e7; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.zb-rev-big { font-size: 22px; font-weight: 700; color: #056de8; }
+.zb-rev-gaps { margin-top: 8px; padding: 8px 10px; background: #f7f9fc; border-radius: 8px; font-size: 13px; line-height: 1.8; }
+.zb-rev-item { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 8px; border-radius: 8px; }
+.zb-rev-item.gap { background: #fff8ef; }
+.zb-rev-item .mastery { margin-left: auto; font-size: 11px; color: #8590a6; }
 `;
 
 let open = false;
@@ -61,15 +97,24 @@ export function openSidebar(tab = 'tail') {
 
   const renderTab = async (name) => {
     [...tabs.children].forEach((c) => c.classList.toggle('on', c.dataset.tab === name));
+    // 打开复盘 tab 视为「已看过」：清角标，本周不再提醒。
+    if (name === 'review') {
+      ackReview();
+      tabs.querySelector('[data-tab="review"] .dot')?.remove();
+    }
     body.replaceChildren();
     if (name === 'tail') return renderTailTab(body, badge);
-    if (name === 'chain') return renderChain(body);
     if (name === 'quiz') return renderQuizTab(body);
+    if (name === 'review') return renderReviewTab(body);
     if (name === 'data') return renderDataTab(body);
+    if (name === 'profile') return renderProfileTab(body);
   };
 
-  for (const [name, label] of [['tail', '我的短尾巴'], ['chain', '去看山'], ['quiz', '看山提问'], ['data', '数据控制']]) {
-    tabs.appendChild(el('button', { class: 'zb-tab', dataset: { tab: name }, text: label, onclick: () => renderTab(name) }));
+  for (const [name, label] of [['tail', '我的短尾巴'], ['quiz', '看山提问'], ['review', '每周复盘'], ['data', '数据控制']]) {
+    const tabBtn = el('button', { class: 'zb-tab', dataset: { tab: name }, text: label });
+    if (name === 'review' && hasUnseenReview()) tabBtn.appendChild(el('span', { class: 'dot' }));
+    tabBtn.addEventListener('click', () => renderTab(name));
+    tabs.appendChild(tabBtn);
   }
 
   root.append(
@@ -79,6 +124,7 @@ export function openSidebar(tab = 'tail') {
         el('img', { src: assetUrl('kanshan/wave.gif'), alt: '看山' }),
         el('span', { class: 't', text: '知伴 · 侧栏' }),
         badge,
+        el('button', { class: 'zb-profile-btn', text: '个人中心', onclick: openProfile }),
         el('button', { class: 'zb-x', text: '×', onclick: closeSidebar }),
       ]),
       tabs,
@@ -91,10 +137,22 @@ export function openSidebar(tab = 'tail') {
   renderTab(tab);
 }
 
+// 个人中心是独立页面（不再作为侧栏 tab）：插件内交给 background 开新标签页扩展页；
+// demo 站没有扩展环境，退回站内 #/profile 路由。
+function openProfile() {
+  if (typeof chrome !== 'undefined' && chrome.runtime?.id) {
+    chrome.runtime.sendMessage({ type: 'zb-open-tab', url: chrome.runtime.getURL('profile.html') });
+    return;
+  }
+  navigate('/profile');
+}
+
 export function closeSidebar() {
+  if (!open) return;
   open = false;
   host?.remove();
   host = null;
+  runtime.emit('sidebar:closed');
 }
 export function isSidebarOpen() { return open; }
 
@@ -128,6 +186,34 @@ async function renderTailTab(body, badge) {
   await refreshHighlights();
 }
 
+// 复盘 tab（计划书第 3 条）：图谱/诊断的展开详情，数据全部来自本地概念记录，零接口依赖。
+async function renderReviewTab(body) {
+  let r = null;
+  try { r = await computeWeeklyReview(); } catch { /* 读不到就当没数据 */ }
+  if (!r) { body.appendChild(el('div', { text: '复盘数据读不出来，稍后再试。' })); return; }
+  if (r.total === 0) {
+    body.appendChild(el('div', { style: 'font-size:13px;line-height:1.9;color:#444', text: '还没有可复盘的概念。读文章时选中不懂的词问一下，这里会自己攒起来——不用你专门来打开这个页面。' }));
+    return;
+  }
+  const passed = r.total - r.stalledCount;
+  const pct = Math.round((r.masteryRate || 0) * 100);
+  body.appendChild(el('div', { class: 'zb-rev-card' }, [
+    el('div', { style: 'font-size:12px;color:#8590a6;margin-bottom:6px', text: `距上次复盘 ${r.daysSince} 天` }),
+    el('div', { html: `<span class="zb-rev-big">${r.total}</span> 个概念 · 走过 ${passed} 个 · 掌握率 ${pct}%` }),
+    el('div', { class: 'zb-rev-gaps', text: `最该补的 3 个：${r.topGaps.join(' / ') || '暂无'}` }),
+  ]));
+  const concepts = await store.listConcepts();
+  const label = { unvisited: '还没走过', fuzzy: '有点模糊', passed: '已走过' };
+  const gaps = new Set(r.topGaps);
+  body.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin:10px 0 6px', text: '你的概念清单（高亮 = 最该补）' }));
+  for (const c of concepts) {
+    body.appendChild(el('div', { class: `zb-rev-item${gaps.has(c.name) ? ' gap' : ''}` }, [
+      el('span', { text: c.name }),
+      el('span', { class: 'mastery', text: label[c.mastery] || label.unvisited }),
+    ]));
+  }
+}
+
 async function renderDataTab(body) {
   body.appendChild(el('div', { style: 'font-size:13px;line-height:1.9;color:#444' }, [
     el('p', { html: '<b>这些记录是什么：</b>你的阅读史和知识盲区，属敏感数据。它们只存在这个浏览器的本地存储里，不上传任何服务器，清缓存会一并清除。' }),
@@ -138,3 +224,5 @@ async function renderDataTab(body) {
     el('button', { text: '清空数据', class: 'danger', onclick: confirmClear }),
   ]));
 }
+
+

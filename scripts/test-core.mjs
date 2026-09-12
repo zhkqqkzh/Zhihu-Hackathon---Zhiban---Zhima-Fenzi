@@ -5,6 +5,8 @@ import { createReviewState, applyFeedback, isDue, nextIntervalDays } from '../de
 import { buildEdges, topoOrder, detectGap, clusterArticles, sortClusterForCuration } from '../demo/js/core/graph.js';
 import { previewDifficulty, difficultyMessage } from '../demo/js/core/difficulty.js';
 import { interceptSelection } from '../demo/js/core/stopwords.js';
+import { isReviewDue, pickTopGaps, buildWeeklyReview, REVIEW_INTERVAL_DAYS } from '../demo/js/core/review.js';
+import { safeFileName, noteToMarkdown, formatTime } from '../demo/js/core/note.js';
 
 let pass = 0, fail = 0;
 function eq(actual, expected, label) {
@@ -105,6 +107,49 @@ eq(interceptSelection('熵'), null, '「熵」单字术语不误杀');
 eq(interceptSelection('') !== null, true, '空选区给提示');
 eq(interceptSelection('！！！') !== null, true, '纯标点拦截');
 ok(interceptSelection('的').includes('常用词'), '拦截给友好提示而非静默失败');
+
+// --- review：每周复盘（计划书第 3 条，零操作被动推送的算法层）---
+const rvConcepts = [
+  { name: '梯度下降', prerequisites: ['梯度'], mastery: 'unvisited', firstAskedAt: 1 },
+  { name: '梯度', prerequisites: ['偏导数'], mastery: 'fuzzy', firstAskedAt: 2 },
+  { name: '导数', prerequisites: [], mastery: 'passed', firstAskedAt: 3 },
+];
+eq(REVIEW_INTERVAL_DAYS, 7, '复盘间隔为 7 天');
+ok(!isReviewDue([], 0, 30 * DAY), '复盘：没有概念记录时不推送');
+ok(isReviewDue(rvConcepts, 0, 30 * DAY), '复盘：从未复盘过，以最早记录为基线，早就该推');
+ok(!isReviewDue(rvConcepts, 25 * DAY, 30 * DAY), '复盘：距上次不足 7 天不推');
+ok(isReviewDue(rvConcepts, 23 * DAY, 30 * DAY), '复盘：恰好满 7 天即推（边界）');
+eq(pickTopGaps(rvConcepts, 3), ['偏导数', '梯度', '梯度下降'], '复盘：优先补「提到但从没记过」的前置，再补最近卡住的');
+eq(pickTopGaps(rvConcepts, 1), ['偏导数'], '复盘：Top 缺口受 limit 约束');
+const rv = buildWeeklyReview({ concepts: rvConcepts, lastReviewAt: 0, now: 30 * DAY });
+eq(rv.shouldPush, true, '复盘 shouldPush');
+eq(rv.daysSince, 29, '复盘 daysSince 以最早记录为基线');
+eq(rv.total, 3, '复盘 概念总数');
+eq(rv.stalledCount, 2, '复盘 卡住概念数（非 passed）');
+eq(rv.masteryRate, 0.33, '复盘 掌握率 1/3 四舍五入到两位');
+eq(buildWeeklyReview({ concepts: rvConcepts, lastReviewAt: 30 * DAY, now: 31 * DAY }).shouldPush, false,
+  '复盘：刚复盘过不推');
+
+// --- note：笔记卡片 Markdown（计划书第 4 条，零接口依赖的导出层）---
+eq(safeFileName('梯度/下降:*?"<>| 笔记'), '梯度-下降-笔记', '文件名清洗非法字符与空白');
+eq(safeFileName(''), '知伴笔记', '空文件名给兜底名');
+eq(safeFileName('长'.repeat(50)).length, 40, '文件名截断到 40 字');
+ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(formatTime(Date.now())), '时间戳格式 YYYY-MM-DD HH:mm');
+const cNote = noteToMarkdown({
+  kind: 'concept', concept: '梯度', definition: '各方向偏导数组成的向量', inContext: '这篇里指下山方向',
+  quote: '指向函数值上升最快的方向', title: '梯度下降', url: 'https://www.zhihu.com/x', createdAt: 0,
+});
+ok(cNote.includes('**概念**：梯度'), '单概念笔记含概念名');
+ok(cNote.includes('**定义**：各方向偏导数组成的向量'), '单概念笔记含定义');
+ok(cNote.includes('**本篇语境**：这篇里指下山方向'), '单概念笔记含本篇语境');
+ok(cNote.includes('**原文引用**：「指向函数值上升最快的方向」'), '单概念笔记含原文引用');
+ok(cNote.includes('**来源**：《梯度下降》'), '单概念笔记含来源标题与链接');
+const gNote = noteToMarkdown({
+  kind: 'guide', title: '反向传播', gap: '偏导数', createdAt: 0,
+  items: [{ name: '梯度', definition: 'd', quote: 'q', link: 'https://www.zhihu.com/s' }],
+});
+ok(gNote.includes('## 1. 梯度'), '导读笔记分节渲染每个概念');
+ok(gNote.includes('你可能还缺、但没问到的一环：偏导数'), '导读笔记带缺口提醒');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

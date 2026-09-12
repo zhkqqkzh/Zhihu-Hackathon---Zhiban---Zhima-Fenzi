@@ -13,7 +13,11 @@ rmSync(DIST, { recursive: true, force: true });
 mkdirSync(DIST, { recursive: true });
 
 await esbuild.build({
-  entryPoints: [join(EXT, 'src/content.js'), join(EXT, 'src/background.js')],
+  entryPoints: [
+    join(EXT, 'src/content.js'),
+    join(EXT, 'src/background.js'),
+    join(EXT, 'src/profile-page.js'), // 个人中心独立页（新标签页承载）
+  ],
   bundle: true,
   format: 'iife',
   target: 'chrome105', // 自定义高亮接口需 Chrome 105+（§22-3）
@@ -23,8 +27,11 @@ await esbuild.build({
 });
 
 cpSync(join(DEMO, 'assets/kanshan'), join(DIST, 'assets/kanshan'), { recursive: true });
-if (existsSync(join(DEMO, 'assets/css/zhiban.css'))) {
+// 独立页需要主文档皮肤（zhihu.css 提供 :root 变量与 .App 容器，zhiban.css 提供 hub 区块样式）
+for (const f of ['zhiban.css', 'zhihu.css']) {
+  const src = join(DEMO, 'assets/css', f);
+  if (!existsSync(src)) continue;
   mkdirSync(join(DIST, 'assets/css'), { recursive: true });
-  cpSync(join(DEMO, 'assets/css/zhiban.css'), join(DIST, 'assets/css/zhiban.css'));
+  cpSync(src, join(DIST, 'assets/css', f));
 }
 console.log('extension dist ready →', DIST);

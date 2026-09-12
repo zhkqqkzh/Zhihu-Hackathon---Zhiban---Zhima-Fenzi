@@ -52,13 +52,18 @@
 .zb-quiz-concept { font-size: 12px; color: #8590a6; margin-bottom: 4px; }
 .zb-quiz-q { font-size: 14px; font-weight: 600; line-height: 1.6; margin-bottom: 8px; }
 .zb-quiz-a {
-  width: 100%; font-size: 13px; line-height: 1.6; padding: 8px 10px;
-  border: 1px solid #e0e5ee; border-radius: 8px; resize: vertical; font-family: inherit;
+  width: 100%; min-height: 68px; font-size: 13px; line-height: 1.6; padding: 9px 11px;
+  border: 1px solid #e0e5ee; border-radius: 8px; resize: none; font-family: inherit;
+  box-sizing: border-box; outline: none; transition: border-color .15s, box-shadow .15s;
 }
+.zb-quiz-a:focus { border-color: #056de8; box-shadow: 0 0 0 3px rgba(5, 109, 232, .1); }
+.zb-quiz-a::placeholder { color: #b3bac6; }
+.zb-quiz-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 .zb-quiz-submit {
-  margin-top: 8px; background: #056de8; color: #fff; border: 0; border-radius: 6px;
-  padding: 6px 16px; font-size: 13px; cursor: pointer;
+  background: #056de8; color: #fff; border: 0; border-radius: 8px;
+  padding: 7px 22px; font-size: 13px; line-height: 1.4; cursor: pointer;
 }
+.zb-quiz-submit:hover { background: #0358bd; }
 .zb-quiz-verdict { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .zb-quiz-verdict.v-correct { color: #3aa655; }
 .zb-quiz-verdict.v-partial { color: #d67a27; }
@@ -111,3 +116,82 @@
 .tl-card .s b { color: #056de8; font-weight: 600; }
 .hub-refresh { float: right; border: 1px solid #e0e5ee; background: #fff; border-radius: 6px; padding: 3px 10px; font-size: 12px; color: #666; cursor: pointer; }
 .hub-refresh:hover { border-color: #056de8; color: #056de8; }
+
+/* ============ 个人中心 · 侧边栏与模块 ============ */
+.pf-layout { display: flex; align-items: flex-start; gap: 16px; }
+.pf-nav { flex: none; width: 148px; background: #fff; border-radius: 6px; padding: 8px; position: sticky; top: 16px; }
+.pf-nav-item {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 6px;
+  font-size: 14px; color: #444; cursor: pointer; user-select: none;
+}
+.pf-nav-item:hover { background: #f4f6f9; }
+.pf-nav-item.active { background: #eaf2fe; color: #056de8; font-weight: 600; }
+.pf-nav-icon { font-size: 15px; }
+.pf-main { flex: 1; min-width: 0; }
+.pf-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.pf-card {
+  background: #fff; border-radius: 6px; padding: 18px 20px; cursor: pointer;
+  border: 1px solid transparent; transition: border-color .15s, box-shadow .15s;
+}
+.pf-card:hover { border-color: #056de8; box-shadow: 0 2px 10px rgba(5, 109, 232, .08); }
+.pf-card-icon { font-size: 20px; }
+.pf-card-title { font-size: 15px; font-weight: 600; margin-top: 6px; }
+.pf-card-desc { font-size: 13px; color: #8590a6; margin-top: 4px; line-height: 1.6; }
+.pf-card-more { font-size: 12px; color: #056de8; margin-top: 10px; }
+
+/* ============ 个人中心 · 知乎区块（账号 / 收藏夹体检 / 分类导图） ============ */
+/* 账号卡 */
+.zb-zhihu-account { display: flex; align-items: center; gap: 14px; }
+.zb-zhihu-avatar { width: 52px; height: 52px; border-radius: 50%; flex: none; background: #eef1f6; object-fit: cover; }
+.zb-zhihu-me { flex: 1; min-width: 0; }
+.zb-zhihu-name { font-size: 16px; font-weight: 600; }
+.zb-zhihu-headline { font-size: 13px; line-height: 1.6; color: #8590a6; margin-top: 3px; }
+.zb-zhihu-src {
+  flex: none; font-size: 12px; color: #2f8f4b; background: #f0f9f2;
+  border: 1px solid #cfe9d6; border-radius: 20px; padding: 3px 10px;
+}
+
+/* 收藏夹选择 */
+.zb-chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.zb-chip {
+  border: 1px solid #e0e5ee; background: #fff; color: #444; border-radius: 20px;
+  padding: 4px 12px; font-size: 12px; cursor: pointer;
+}
+.zb-chip:hover { border-color: #056de8; color: #056de8; }
+.zb-chip.active { background: #056de8; border-color: #056de8; color: #fff; }
+
+/* 分类导图：纯 DOM 树，靠缩进 + 虚线连接（MV3 扩展页用不了图谱库） */
+.zb-tree, .zb-tree-children { list-style: none; margin: 0; padding: 0; }
+.zb-tree-children { margin-left: 16px; padding-left: 14px; border-left: 1px dashed #dbe1ea; }
+.zb-tree-children > li { position: relative; padding: 4px 0; }
+.zb-tree-children > li::before {
+  content: ''; position: absolute; left: -14px; top: 15px; width: 10px; height: 1px; background: #dbe1ea;
+}
+.zb-tree-label { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.7; }
+.zb-tree-label.root { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+.zb-tree-label.group { font-weight: 600; color: #1f2329; }
+.zb-tree-count { font-size: 12px; font-weight: 400; color: #8590a6; }
+.zb-tree-link { color: #1f2329; text-decoration: none; }
+.zb-tree-link:hover { color: #056de8; }
+
+/* 质量等级标签 */
+.zb-lv {
+  flex: none; font-size: 11px; border-radius: 10px; padding: 1px 8px;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.zb-lv.lv-high { color: #2f8f4b; background: #f0f9f2; border-color: #cfe9d6; }
+.zb-lv.lv-mid { color: #ad6800; background: #fff7e6; border-color: #ffe1a8; }
+.zb-lv.lv-low { color: #8590a6; background: #f4f6f9; border-color: #e3e7ee; }
+
+/* 体检清单 */
+.zb-check-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.zb-check-item { border: 1px solid var(--zb-border); border-radius: 8px; padding: 10px 12px; transition: border-color .15s; }
+.zb-check-item:hover { border-color: #056de8; }
+.zb-check-head { display: flex; align-items: center; gap: 8px; }
+.zb-check-title {
+  flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #1f2329; text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.zb-check-title:hover { color: #056de8; }
+.zb-check-note { font-size: 13px; line-height: 1.7; color: #444; margin-top: 6px; }
+.zb-check-meta { font-size: 12px; color: #8590a6; margin-top: 4px; }
