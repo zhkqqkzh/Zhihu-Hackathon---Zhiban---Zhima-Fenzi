@@ -31,10 +31,11 @@
 |---|---|---|
 | 卡点入账 | 浮层底部「这里我也卡了一下 · N 人也卡在这」，点一下 +1，零注册 | `demo/js/app/popup.js` + `demo/js/core/stuck.js` |
 | 同篇聚合 | 文章页侧栏「本篇卡点」TOP3，点一条跳回原文那一段并高亮 | `demo/js/app/sidebar.js` + `store.js`(`anchorToRanges`) |
+| 跨设备聚合 | 上报匿名进 SCF `/stuck`（只传「概念名 + 段号」，不传正文与身份），他人在别的设备上读回同一篇的卡点，飞轮才真的转起来 | `scf/index.js`(`/stuck`) + `server/handlers/stuck.js` + `api.js`(`reportStuck`/`getStuckAggregate`) |
 | 读者洞察 | 首页首屏三句话：多少人赞同 / 第几段多少人卡住 / 卡住他们的是同一个词 | `demo/js/app/home.js` + `stuck.js`(`topStuckInsight`) |
 | 答主视角 | `#/creator`「你的读者，卡在这三个地方」→ 一键生成前置说明草稿（复用导读，可导出 `.md`） | `demo/js/app/creator.js` + `guide.js` |
 
-数据来源如实标注（改造方案 §4.5 / 验收 §七-6）：预置演示数据标「演示环境数据」，本机上报标「你的上报」，两者叠加时同时标出。
+数据来源如实标注（改造方案 §4.5 / 验收 §七-6）：预置演示数据标「演示环境数据」，本机上报标「你的上报」，别台设备经 `/stuck` 聚合的匿名上报标「社区上报」，多源叠加时同时标出（后端聚合计数已含本机那一次，前端只叠加 `max(0, 社区数 − 本机数)`，同一个人不重复计入）。首页洞察的赞数同为 Demo 内容，一并标注「示例数据」。
 本仓库**不做**「一键发布到知乎」（§六：官方接口只读）——答主拿到草稿后自行补进回答，价值由此回到社区。
 
 ### P0 · 必做，且做到极致
@@ -154,18 +155,19 @@ export ZHIHU_ACCESS_SECRET=xxx
 ## 四、测试与校验
 
 ```bash
-npm run check        # 全量 JS 语法（node --check）+ 模块导入解析（路径/具名/默认导出）；当前 61 文件 0 失败
-npm run test:core    # 核心算法 127 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
+npm run check        # 全量 JS 语法（node --check）+ 模块导入解析（路径/具名/默认导出）；当前 62 文件 0 失败
+npm run test:core    # 核心算法 140 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
                      # 边加权/缺口Top1/聚类/策展排序/回访间隔/难度三档/停用词拦截/
                      # explain 结构漂移解包（answer 包装/平铺/非概念短路）/
                      # 每周复盘（7 天触发口径/掌握率/Top 缺口）/笔记 Markdown 生成（文件名清洗/时间戳）/
-                     # 卡点聚合（seed+现场上报叠加/TOP3/来源标注/答主报告）/首页三秒洞察（段号/占比/赞数）
+                     # 卡点聚合（seed+现场上报+社区聚合三源叠加与去重/TOP3/来源标注/答主报告）/
+                     # 首页三秒洞察（段号/占比/赞数）
 npm run test:hub     # 学习中心 23 项：buildHubGraph 节点/边方向/缺口判定/三色计数/
                      # 主题归类/诊断总结/薄弱主题 TOP3/建议补概念/空数据兜底
-npm run test:api     # 后端 22 项：四接口结构/字段零缺失/400/限流429/CORS/目录穿越
-npm run test:e2e     # 端到端 48 项：Edge 无头 + CDP 真实划选→首页三秒洞察→浮层三层解释（含前置）→
+npm run test:api     # 后端 28 项：五接口结构/字段零缺失/400/限流429/CORS/目录穿越/卡点上报与聚合
+npm run test:e2e     # 端到端 52 项：Edge 无头 + CDP 真实划选→首页三秒洞察→浮层三层解释（含前置）→
                      # 浮层卡点 +1 与来源标注→选「的」不弹窗→侧栏本篇卡点 TOP3 跳段落高亮→
-                     # 答主视角页卡点报告与前置说明草稿→诚实的空状态→SCF 预热接入
+                     # 答主视角页卡点报告与前置说明草稿→诚实的空状态→社区聚合读回→SCF 预热接入
 npm run build:ext    # 插件打包到 extension/dist
 ```
 
@@ -222,6 +224,15 @@ Base：`https://<你的云函数域名>`（当前开发环境地址写在 `demo/
 `extension/src/background.js` 的 `ZHIHU_API_ALLOW` 白名单转发知乎 web API（`/api/v4/me`、`members|people/.../collections`、
 `collections/.../items`），前端 `api.analyzeCollections` 调用。
 
+### POST /stuck —— 读者卡点匿名聚合（改造方案 §三 飞轮）
+
+请求：`{ "action": "report", "articleId": "…", "concept": "…", "paragraphIndex": 1 }`（上报，同篇同词按人计一次）；
+或 `{ "action": "top", "articleId": "…", "topN": 10 }`（读取该篇卡点，按上报次数降序）
+响应：`report` → `{ "ok": true, "count": N }`；`top` → `{ "items": [{ "concept": "…", "count": N, "paragraphIndex": 1 }] }`
+只传「概念名 + 段号」，**不含正文、链接与身份**；本地 dev server 的 `/api/stuck` 为同构镜像，供离线端到端验证。
+读回后与 `core/stuck.js` 的 seed 数据按「只叠加 `max(0, 社区数 − 本机数)`」去重，再如实标注来源（§一「数据来源如实标注」）。
+**内存聚合、非持久化**：计数存在函数实例内存里（`STUCK_MAX_ARTICLES`/`STUCK_MAX_CONCEPTS` 有上限），冷启动或多实例下会归零/不一致——演示够用，生产需换数据库（见 §十）。
+
 ### 错误约定
 | 场景 | 状态码 |
 |---|---|
@@ -230,7 +241,7 @@ Base：`https://<你的云函数域名>`（当前开发环境地址写在 `demo/
 | 大模型 API 失败 / 非 2xx | 502 |
 | SCF 平台超时 | 由云函数平台处理（函数超时须配 60 秒，代码内 55 秒主动熔断） |
 
-## 六、数据模型（全部浏览器本地，无服务器存储）
+## 六、数据模型（正文与阅读记录全部浏览器本地；服务器只存匿名卡点计数，且非持久化）
 
 localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）：
 
@@ -244,7 +255,7 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 | `zb:guide:<文章id>` | 生成的导读（含缺口提醒） |
 | `zb:note:<id>` | 我的笔记卡片（单概念 / 导读）：概念、定义、本篇语境、原文引用、来源链接、编辑后正文、时间戳；导出 `.md` 的数据源 |
 | `zb:meta` | 首访引导等元信息，以及 `lastReviewAt`（上次每周复盘时间，用于 7 天触发口径） |
-| `zb:stuck:<文章id>` | 本机卡点上报：`{ marks: [{ concept, paragraphIndex, startOffset, endOffset, at }] }`，同篇同词只存一条（防刷量）；读取时与 `core/stuck.js` 的 seed 数据叠加（§4.2/§4.5） |
+| `zb:stuck:<文章id>` | 本机卡点上报：`{ marks: [{ concept, paragraphIndex, startOffset, endOffset, at }] }`，同篇同词只存一条（防刷量）。写入本机的同时，把「概念名 + 段号」匿名上报到 `/stuck`（上传失败静默，不影响本机功能）；读取时与 `core/stuck.js` 的 seed 数据、别台设备的社区聚合结果三源叠加（§4.2/§4.5） |
 
 掌握状态三档：`unvisited`（还没走过）→ `fuzzy`（有点模糊）→ `passed`（已走过）。
 
@@ -259,7 +270,7 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 | 预扫描（懒触发、8000 字截断、逐字照抄校验） | `demo/js/app/prescan.js` + SCF `/prescan` |
 | 解释结果归一（`{"answer":{…}}` 多包一层解包 + 字段映射） | `demo/js/core/explain.js` |
 | 预扫描词表清洗（幽灵标记丢弃 + 通用词/频次过滤，问题清单 P1-1/P1-2） | `demo/js/core/prescan.js` |
-| 读者卡点聚合（seed + 现场上报叠加、TOP3、来源标注、答主报告、首屏洞察） | `demo/js/core/stuck.js` |
+| 读者卡点聚合（seed + 现场上报 + 社区聚合三源叠加与去重、TOP3、来源标注、答主报告、首屏洞察） | `demo/js/core/stuck.js` |
 | 依赖边 / 白名单过滤（泛化父概念回退）/ 边加权（双篇验证才实线）/ 缺口 Top 1 | `demo/js/core/graph.js` |
 | 拓扑排序与策展排序 | `demo/js/core/graph.js` |
 | 主题聚类（Jaccard 并查集传递闭包，阈值 0.1） | `demo/js/core/graph.js` |
@@ -345,6 +356,7 @@ npm run build:ext
 - **安全**：密钥只走环境变量；建议智谱控制台设消费硬上限（唯一真正的金钱防线）；泄露过的密钥及时重置。
 - **收藏夹体检依赖插件环境**：需读知乎登录态，Demo 站（无扩展注入）只给出引导文案，完整体检在扩展版个人中心查看。
 - **未做**：难度预告与短尾巴回访已在 Demo 站实现但未进 SCF（零模型调用、纯前端，不受后端影响）；移动端划选不可行（形态天花板）。
+- **卡点聚合非持久化**：`/stuck` 的计数存在函数实例内存里，冷启动或多实例（并发扩容）下会归零、或读不到别台设备的计数——足以支撑现场演示「飞轮在转」，但**不是生产级统计**，界面因此始终如实标注「演示环境数据 / 你的上报 / 社区上报」三源而不合并成一个数。换持久化存储只需替换该路由的读写实现，前端与接口契约不变。
 
 ---
 
