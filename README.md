@@ -294,7 +294,7 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 
 1. 函数配置 → 上传 `scf/zhiban-scf.zip`（zip 根目录必须含 `scf_bootstrap`/`index.js`/`package.json`/`node_modules`，正斜杠路径；重新打包脚本见 git 历史或按 `extension/build.mjs` 同款 Python zipfile 方式）
 2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）；执行超时 **60 秒**
-3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections`
+3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections` → `POST /stuck`（`{"action":"report",…}` 再 `{"action":"top",…}` 应能读回计数）
 4. 改过 `scf/index.js` 后**必须重新打包上传**，否则线上仍是旧 prompt——`/ask` 的 `is_concept` 非概念拦截（问题清单 P0-2）依赖这一步才会生效
 
 ### 8.2 静态 Demo 站
