@@ -7,6 +7,7 @@
 
 import { el, toast } from './ui.js';
 import * as store from './store.js';
+import { api } from './api.js';
 import { ARTICLES, ARTICLE_BY_ID } from '../data/articles.js';
 import { buildCreatorReport, articleIdFromLink, formatCount, stuckSourceLabel } from '../core/stuck.js';
 import { buildGuide } from './guide.js';
@@ -17,7 +18,12 @@ import { navigate } from './router.js';
 function renderReport(host, report) {
   host.replaceChildren(el('div', { class: 'QuestionHeader', style: 'margin:0 0 12px' }, [
     el('h1', { style: 'font-size:19px', text: report.title || report.articleId }),
-    el('div', { class: 'meta', text: `${report.author} · ${formatCount(report.voteupCount)} 赞同 · 三处卡点合计被标记 ${formatCount(report.topStuck)} 次（本篇全部卡点 ${formatCount(report.totalStuck)} 次）` }),
+    el('div', { class: 'meta' }, [
+      el('span', { text: `${report.author} · ${formatCount(report.voteupCount)} 赞同` }),
+      // 与首页同一条原则：写死的赞数标出来，卡点数字的来源仍在每条里逐条标注。
+      el('span', { class: 'demo-tag', text: '示例数据' }),
+      el('span', { text: ` · 三处卡点合计被标记 ${formatCount(report.topStuck)} 次（本篇全部卡点 ${formatCount(report.totalStuck)} 次）` }),
+    ]),
   ]));
 
   const list = el('div', {});
@@ -79,7 +85,7 @@ export async function renderCreator(app) {
   wrap.append(el('h1', { style: 'font-size:22px;margin-bottom:8px', text: '你的读者，卡在这三个地方' }));
   wrap.append(el('div', { class: 'lead', html:
     '<p>把任意一篇知乎回答的链接粘进来，看看读者在哪三个词上卡得最多。</p>' +
-    '<p>知伴只把读者标记过的卡点聚合起来，如实标出数据来源——不替你美化，也不上传任何内容。</p>'
+    '<p>知伴只把读者标记过的卡点匿名聚合起来，如实标出数据来源——不替你美化，也绝不碰正文和你的阅读记录。</p>'
   }));
 
   const input = el('input', {
@@ -96,7 +102,9 @@ export async function renderCreator(app) {
     const articleId = articleIdFromLink(link ?? input.value);
     if (!articleId) { renderUnrecognized(result, run); return; }
     const marks = await store.getStuckMarks(articleId);
-    const report = buildCreatorReport(articleId, ARTICLE_BY_ID.get(articleId), marks, 3);
+    // 社区聚合（问题 1）：加上别台设备经 /stuck 上报的卡点，答主看到的不只是本机那点数据。
+    const community = await api.getStuckAggregate({ articleId, topN: 10 }).then((r) => r?.items || []).catch(() => []);
+    const report = buildCreatorReport(articleId, ARTICLE_BY_ID.get(articleId), marks, 3, community);
     if (!report.hasData) {
       result.replaceChildren(el('div', { style: 'font-size:13px;line-height:1.9;color:#8590a6', text: '这篇回答目前还没有读者卡点数据。等有读者在正文里标过「我也卡了一下」，这里就会有报告。' }));
       return;

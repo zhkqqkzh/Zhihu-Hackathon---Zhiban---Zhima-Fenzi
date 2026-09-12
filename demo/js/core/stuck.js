@@ -1,12 +1,14 @@
 // 卡点数据层（改造方案 §三「把困惑从私有消耗品变成社区公共品」）。
 // 纯函数，不碰 DOM / localStorage（铁律 3）；读写统一走 app/store.js。
-// 数据来源必须可追溯（验收 §七-6），两类绝不混淆：
-//   seed  —— 演示环境预置数据，界面标注「演示环境数据」；
-//   marks —— 本浏览器现场真实上报，界面标注「你的上报」。
-// 单篇卡点 = seed + marks 叠加，聚合与 TOP N 全部在这里算，界面只负责渲染。
+// 数据来源必须可追溯（验收 §七-6），三类绝不混淆：
+//   seed      —— 演示环境预置数据，界面标注「演示环境数据」；
+//   marks     —— 本浏览器现场真实上报，界面标注「你的上报」；
+//   community —— 别台设备经 /stuck 聚合回来的匿名上报，界面标注「社区上报」。
+// 单篇卡点 = seed + marks + community 叠加，聚合与 TOP N 全部在这里算，界面只负责渲染。
 
 export const STUCK_SEED_LABEL = '演示环境数据';
 export const STUCK_LOCAL_LABEL = '你的上报';
+export const STUCK_COMMUNITY_LABEL = '社区上报';
 
 // 人数展示统一走千分位（改造方案 §4.1 的「1,283」写法），4.1/4.2/4.3/4.4 共用。
 export function formatCount(n) {
@@ -56,15 +58,17 @@ export function articleIdFromLink(link) {
   return '';
 }
 
-// 把 seed 与本地上报叠加成一份卡点列表（按卡住人数降序）。
+// 把 seed / 本地上报 / 社区聚合叠加成一份卡点列表（按卡住人数降序）。
+// community 形如 [{ concept, count, paragraphIndex }]，来自后端 /stuck 的 top 聚合。
+// 注意：社区计数已包含本机那一次上报，因此这里只叠加「超出本地计数」的部分，避免同一个人被算两遍。
 // topN 为 null 时返回全部。返回的是新对象，调用方改不到常量。
-export function mergeStuck(articleId, marks = [], topN = null) {
+export function mergeStuck(articleId, marks = [], topN = null, community = []) {
   const map = new Map();
   for (const s of STUCK_SEED[articleId] || []) {
     map.set(s.concept, {
       articleId, concept: s.concept,
       paragraphIndex: s.paragraphIndex, startOffset: 0, endOffset: 0,
-      count: s.count, seedCount: s.count, localCount: 0,
+      count: s.count, seedCount: s.count, localCount: 0, communityCount: 0,
     });
   }
   for (const m of marks || []) {
@@ -83,7 +87,24 @@ export function mergeStuck(articleId, marks = [], topN = null) {
       map.set(m.concept, {
         articleId, concept: m.concept,
         paragraphIndex: m.paragraphIndex ?? 0, startOffset: m.startOffset || 0, endOffset: m.endOffset || 0,
-        count: 1, seedCount: 0, localCount: 1,
+        count: 1, seedCount: 0, localCount: 1, communityCount: 0,
+      });
+    }
+  }
+  for (const c of community || []) {
+    if (!c || !c.concept) continue;
+    const remote = Math.max(0, Number(c.count) || 0);
+    const cur = map.get(c.concept);
+    if (cur) {
+      const extra = Math.max(0, remote - cur.localCount);
+      if (!extra) continue;
+      cur.count += extra;
+      cur.communityCount += extra;
+    } else if (remote) {
+      map.set(c.concept, {
+        articleId, concept: c.concept,
+        paragraphIndex: c.paragraphIndex ?? 0, startOffset: 0, endOffset: 0,
+        count: remote, seedCount: 0, localCount: 0, communityCount: remote,
       });
     }
   }
@@ -103,25 +124,26 @@ export function hasStuckMark(marks = [], concept) {
   return (marks || []).some((m) => m?.concept === concept);
 }
 
-// 数据来源标签（§4.5 / 验收 §七-6）：seed 与现场上报叠加时同时标出，
-// 绝不把演示数据冒充成真实统计。4.1/4.3/4.4 共用，避免各写一份。
+// 数据来源标签（§4.5 / 验收 §七-6）：seed / 本地上报 / 社区上报叠加时同时标出，
+// 绝不把演示数据冒充成真实统计。4.1/4.2/4.3/4.4 共用，避免各写一份。
 export function stuckSourceLabel(item) {
-  const seed = (item?.seedCount || 0) > 0;
-  const local = (item?.localCount || 0) > 0;
-  if (seed && local) return `${STUCK_SEED_LABEL} + ${STUCK_LOCAL_LABEL}`;
-  return seed ? STUCK_SEED_LABEL : STUCK_LOCAL_LABEL;
+  const parts = [];
+  if ((item?.seedCount || 0) > 0) parts.push(STUCK_SEED_LABEL);
+  if ((item?.localCount || 0) > 0) parts.push(STUCK_LOCAL_LABEL);
+  if ((item?.communityCount || 0) > 0) parts.push(STUCK_COMMUNITY_LABEL);
+  return parts.join(' + ');
 }
 
-// 首页三秒洞察（改造方案 §4.1）：赞数取真实文章数据，卡点数取 seed/上报，
+// 首页三秒洞察（改造方案 §4.1）：赞数取真实文章数据，卡点数取 seed/上报/社区聚合，
 // 全部可追溯。返回 null 表示这篇没有卡点数据——调用方不该硬凑。
 // share = 第一大卡点占本篇全部卡点的比例，让「卡住他们的是同一个词」这句话有数字兜底。
-export function topStuckInsight(articleId, article, marks = []) {
-  const all = mergeStuck(articleId, marks);
+export function topStuckInsight(articleId, article, marks = [], community = []) {
+  const all = mergeStuck(articleId, marks, null, community);
   const top = all[0];
   if (!top) return null;
   const totalStuck = all.reduce((n, s) => n + s.count, 0);
   return {
-    ...top, // 含 count/seedCount/localCount，调用方可直接判来源（stuckSourceLabel）
+    ...top, // 含 count/seedCount/localCount/communityCount，调用方可直接判来源（stuckSourceLabel）
     paragraph: (top.paragraphIndex ?? 0) + 1, // 面向读者的段号从 1 起
     voteupCount: article?.voteupCount || 0,
     title: article?.title || '',
@@ -133,8 +155,8 @@ export function topStuckInsight(articleId, article, marks = []) {
 // 答主视角报告（改造方案 §4.4）：一份回答的读者卡点报告。
 // totalStuck 是「本篇全部卡点」，topStuck 才是展示的这三处合计——两个数分开，
 // 因为界面上的 share 写的是「占全部卡点的 X%」，分母必须是全部（验收 §七-6：数字要说清从哪来）。
-export function buildCreatorReport(articleId, article, marks = [], topN = 3) {
-  const all = mergeStuck(articleId, marks);
+export function buildCreatorReport(articleId, article, marks = [], topN = 3, community = []) {
+  const all = mergeStuck(articleId, marks, null, community);
   const items = all.slice(0, topN);
   const totalStuck = all.reduce((n, s) => n + s.count, 0);
   const topStuck = items.reduce((n, s) => n + s.count, 0);

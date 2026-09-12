@@ -176,6 +176,8 @@ try {
   const home = await poll(`document.querySelector('.HomeInsight') ? document.getElementById('app').textContent : null`, 8000);
   ok(!!home && home.includes('8,432') && home.includes('人赞同'),
     '首屏洞察：这篇回答有多少人赞同（取真实文章数据）');
+  const insightTag = await evaluate(`document.querySelector('.HomeInsight .demo-tag')?.textContent`);
+  ok(insightTag === '示例数据', '首屏赞数如实标注「示例数据」，与卡点数据一样不冒充真实统计（问题 2）');
   ok(!!home && home.includes('第 2 段') && home.includes('1,283'),
     '首屏洞察：读到哪一段、有多少人卡住');
   ok(!!home && home.includes('卡住他们的，是同一个词：链式法则'),
@@ -337,6 +339,24 @@ try {
   await evaluate(fillAndGo('https://www.zhihu.com/question/1/answer/9999999999'));
   const emptyState = await poll(`document.getElementById('app').textContent.includes('认不出这个链接') ? document.getElementById('app').textContent : null`);
   ok(!!emptyState && emptyState.includes('演示环境只收录了'), '未收录链接给诚实空状态，不硬凑数据（§4.5）');
+
+  // 9. 社区聚合（问题 1 闭环）：本机上报 → 后端 /stuck 聚合 → 页面重新读回「社区上报」，
+  // 证明「你划一下，下一个读到的人少卡一次」这条飞轮真的在跑，而不只是本地 localStorage。
+  const reported = await fetch(BASE + '/api/stuck', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'report', articleId: 'article-backprop', concept: '链式法则', paragraphIndex: 1 }),
+  }).then((r) => r.json());
+  ok(reported?.count === 1, '社区上报：本机那一次进到后端聚合（/stuck count=1）');
+  const agg = await fetch(BASE + '/api/stuck', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'top', articleId: 'article-backprop', topN: 10 }),
+  }).then((r) => r.json());
+  ok(Array.isArray(agg?.items) && agg.items.some((i) => i.concept === '链式法则'),
+    '社区聚合：别台设备能读回该篇卡点（/stuck top）');
+  await evaluate(`location.hash = '#/'`);
+  const homeCommunity = await poll(`document.getElementById('app').textContent.includes('社区上报') ? document.getElementById('app').textContent : null`, 8000);
+  ok(!!homeCommunity && homeCommunity.includes('演示环境数据 + 社区上报'),
+    '首页读回社区聚合并如实标注「演示环境数据 + 社区上报」（问题 1 飞轮可见）');
 } catch (e) {
   fail++;
   console.error('E2E aborted:', e.message);

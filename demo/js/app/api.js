@@ -144,6 +144,10 @@ export const api = {
   prescan: (p) => post(IS_LOCAL ? 'api/prescan' : 'prescan', p),
   search: (p) => post(IS_LOCAL ? 'api/search' : 'search', p),
   quiz: (p) => (IS_LOCAL ? post('api/quiz', p) : scfQuiz(p)),
+  // 卡点聚合（问题 1）：本地走 dev server 内存镜像，线上走 SCF /stuck。
+  // 上报只带「概念 + 段号」，不含正文与用户标识；失败由调用方静默降级，本地记录不依赖网络。
+  reportStuck: (p) => post(IS_LOCAL ? 'api/stuck' : 'stuck', { ...p, action: 'report' }),
+  getStuckAggregate: (p) => post(IS_LOCAL ? 'api/stuck' : 'stuck', { ...p, action: 'top' }),
   // 收藏夹体检（聚类 + 点评）：只服务插件版个人中心——demo 站拿不到知乎登录态，
   // 本地 dev server 也没有对应 mock，所以不做 IS_LOCAL 分支，统一走 SCF。
   analyzeCollections: (p) => post('collections', p),

@@ -20,7 +20,7 @@ export async function renderIgloo(app) {
   const wrap = el('div', {}, [
     el('div', { class: 'HomeHero' }, [
       el('h1', { text: '🧊 冰屋' }),
-      el('div', { class: 'sub', text: '你所有痕迹的总览。它们只存在这个浏览器里。' }),
+      el('div', { class: 'sub', text: '你攒下的概念和路径都在这里——只存在这个浏览器里。' }),
       el('div', { class: 'IglooStats' }, [
         stat('短尾巴', concepts.length, '个概念'),
         stat('已走过', passed, '个营地'),

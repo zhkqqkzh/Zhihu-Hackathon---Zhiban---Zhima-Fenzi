@@ -146,6 +146,6 @@ export async function renderGuide(app, articleId) {
   wrap.appendChild(el('div', { style: 'margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, [
     saveBtn, exportBtn,
   ]));
-  wrap.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin-top:10px', text: '笔记只存在这个浏览器里，导出的是标准 Markdown 文件；知伴不上传内容，也不代你发布。' }));
+  wrap.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin-top:10px', text: '笔记只存在这个浏览器里，导出的是标准 Markdown 文件；知伴不上传你的正文，也不代你发布。' }));
   app.replaceChildren(wrap);
 }

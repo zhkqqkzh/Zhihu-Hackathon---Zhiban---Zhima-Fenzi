@@ -5,7 +5,7 @@
 import { shadowRoot, el, assetUrl } from './ui.js';
 import { interceptSelection } from '../core/stopwords.js';
 import { collectTextNodes as collectParagraphTextNodes } from '../core/textnodes.js';
-import { mergeStuck, hasStuckMark, formatCount } from '../core/stuck.js';
+import { mergeStuck, hasStuckMark, formatCount, stuckSourceLabel } from '../core/stuck.js';
 import { api, sanitizeHtml, zhihuSearchUrl, scfExplainStream, STREAM_EXPLAIN } from './api.js';
 import { runtime } from './runtime.js';
 import * as store from './store.js';
@@ -325,15 +325,20 @@ export function openPopup({ concept, articleId }) {
     ]));
 
     // 卡点上报（改造方案 §4.2）：把「卡住」从私有消耗品变成社区公共品。
-    // 人数 = core/stuck.js 的 seed（演示环境数据）+ 本浏览器现场上报，读取时叠加（§4.5）。
+    // 人数 = core/stuck.js 的 seed（演示环境数据）+ 本机上报 + 社区匿名聚合，读取时叠加（§4.5）。
     // 数据来源必须可追溯（验收 §七-6）：含演示数据时如实标注，不冒充真实统计。
     const marks = await store.getStuckMarks(articleId);
     const stuckBtn = el('button', { class: 'zb-act' });
     const stuckNote = el('div', { class: 'zb-stuck-note' });
-    const paintStuck = (list) => {
-      const item = mergeStuck(articleId, list).find((s) => s.concept === concept) || null;
+    // 保留最近一次的本地 marks 与社区聚合：任一方后到都能用完整数据重绘，不会互相覆盖。
+    let latestMarks = marks;
+    let latestCommunity = [];
+    const paintStuck = (list, community) => {
+      if (list) latestMarks = list;
+      if (community) latestCommunity = community;
+      const item = mergeStuck(articleId, latestMarks, null, latestCommunity).find((s) => s.concept === concept) || null;
       const count = item?.count || 0;
-      const done = hasStuckMark(list, concept);
+      const done = hasStuckMark(latestMarks, concept);
       stuckBtn.textContent = done
         ? `已记下 · ${formatCount(count)} 人也卡在这`
         : (count > 0 ? `这里我也卡了一下 · ${formatCount(count)} 人也卡在这` : '这里我也卡了一下');
@@ -341,9 +346,13 @@ export function openPopup({ concept, articleId }) {
       stuckBtn.classList.toggle('is-done', done);
       stuckNote.textContent = !item
         ? '这个词还没有人标记过，你是第一个。'
-        : item.seedCount > 0 ? '演示环境数据 + 你的上报，只存本浏览器' : '你的上报，只存本浏览器';
+        : `数据来源：${stuckSourceLabel(item)} · 只上报概念名和段号，正文留在本机`;
     };
     paintStuck(marks);
+    // 读回社区聚合（问题 1）：拿到别台设备的匿名上报后重绘一次人数，失败就保持本地数据。
+    api.getStuckAggregate({ articleId, topN: 10 })
+      .then((r) => { if (r?.items?.length) paintStuck(null, r.items); })
+      .catch(() => {});
     stuckBtn.onclick = async () => {
       stuckBtn.disabled = true;
       const anchor = captureAnchor(runtime.page, concept);
@@ -358,7 +367,7 @@ export function openPopup({ concept, articleId }) {
     bodyEl.appendChild(el('div', { class: 'zb-actions' }, [stuckBtn]));
     bodyEl.appendChild(stuckNote);
 
-    bodyEl.appendChild(el('div', { class: 'zb-foot', text: '所有记录仅存于本浏览器，不上传服务器' }));
+    bodyEl.appendChild(el('div', { class: 'zb-foot', text: '正文与阅读记录只存本机；卡点只匿名上报「概念名 + 段号」' }));
     await getGuideTrigger(articleId).catch(() => {}); // 本篇 ≥3 概念触发导读生成提醒
   })();
 

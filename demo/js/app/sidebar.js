@@ -6,6 +6,7 @@
 import { shadowRoot, el, toast, assetUrl } from './ui.js';
 import { runtime, jumpToAnchor } from './runtime.js';
 import * as store from './store.js';
+import { api } from './api.js';
 import { mergeStuck, formatCount, stuckSourceLabel } from '../core/stuck.js';
 import { ensurePrescan, refreshHighlights } from './prescan.js';
 import { renderQuizTab } from './quiz.js';
@@ -132,7 +133,7 @@ export function openSidebar(tab = 'tail') {
       tabs,
       body,
       el('div', { class: 'zb-fixed', text: '你关心过的这些概念，也是你的特别之处。' }),
-      el('div', { class: 'zb-fixed', style: 'border-top:0;padding-top:0', text: '所有记录仅存于本浏览器，不上传服务器。' }),
+      el('div', { class: 'zb-fixed', style: 'border-top:0;padding-top:0', text: '正文与阅读记录只存本机；卡点只匿名上报「概念名 + 段号」。' }),
     ]),
   );
   document.getElementById('zb-sidebar-root').appendChild(host);
@@ -189,8 +190,8 @@ async function renderTailTab(body, badge) {
 }
 
 // 卡点热力 tab（改造方案 §4.3）：本篇读者卡得最多的 3 个词，点一下跳回原文那一段。
-// 数据来源如实标注（§4.5 / 验收 §七-6）：seed 标「演示环境数据」，现场上报标「你的上报」，
-// 两类叠加时同时标出——不把演示数据冒充成真实统计。
+// 数据来源如实标注（§4.5 / 验收 §七-6）：seed 标「演示环境数据」，本机上报标「你的上报」，
+// 别台设备经 /stuck 聚合回来的标「社区上报」——不把演示数据冒充成真实统计。
 async function renderStuckTab(body) {
   const page = runtime.page;
   if (!page) {
@@ -198,7 +199,11 @@ async function renderStuckTab(body) {
     return;
   }
   const marks = await store.getStuckMarks(page.articleId);
-  const list = mergeStuck(page.articleId, marks, 3);
+  // 社区聚合（问题 1）：叠加别台设备经 /stuck 匿名上报的卡点，「多设备互相看到」在这里可见。
+  // 读不到就只显示本地/演示数据，不挡渲染。
+  const community = await api.getStuckAggregate({ articleId: page.articleId, topN: 10 })
+    .then((r) => r?.items || []).catch(() => []);
+  const list = mergeStuck(page.articleId, marks, 3, community);
   if (!list.length) {
     body.appendChild(el('div', { text: '这篇还没有读者卡点数据。' }));
     return;
@@ -247,7 +252,7 @@ async function renderReviewTab(body) {
 
 async function renderDataTab(body) {
   body.appendChild(el('div', { style: 'font-size:13px;line-height:1.9;color:#444' }, [
-    el('p', { html: '<b>这些记录是什么：</b>你的阅读史和知识盲区，属敏感数据。它们只存在这个浏览器的本地存储里，不上传任何服务器，清缓存会一并清除。' }),
+    el('p', { html: '<b>这些记录是什么：</b>你的阅读史和知识盲区，属敏感数据。它们只存在这个浏览器的本地存储里，清缓存会一并清除；唯一离开本机的是卡点——只上报「概念名 + 段号」做匿名聚合。' }),
     el('p', { html: '<b>想重新开始？</b>清空后回到冷启动，可以演示"从零攒出一条路径"。' }),
   ]));
   body.appendChild(el('div', { class: 'zb-btnrow', style: 'padding:8px 0' }, [

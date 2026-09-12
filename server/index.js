@@ -1,4 +1,4 @@
-// 本地开发服务器：静态托管 demo/ + 四个 API（§14.2）。
+// 本地开发服务器：静态托管 demo/ + 五个 API（§14.2）。
 // 处理器与 HTTP 层解耦，迁移到腾讯云 SCF / 阿里云 FC 时只需包一层入口。
 // 部署约束（§8.3）：前后端均 HTTPS + 正确 CORS 头；云函数超时调至 30–60 秒。
 import http from 'node:http';
@@ -11,6 +11,7 @@ import { handleExplain } from './handlers/explain.js';
 import { handlePrescan } from './handlers/prescan.js';
 import { handleSearch } from './handlers/search.js';
 import { handleQuiz } from './handlers/quiz.js';
+import { handleStuck } from './handlers/stuck.js';
 
 const DEMO_DIR = fileURLToPath(new URL('../demo', import.meta.url));
 const ROUTES = {
@@ -18,6 +19,7 @@ const ROUTES = {
   '/api/prescan': handlePrescan,
   '/api/search': handleSearch,
   '/api/quiz': handleQuiz,
+  '/api/stuck': handleStuck,
 };
 
 const MIME = {

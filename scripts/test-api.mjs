@@ -14,7 +14,7 @@ function ok(cond, label, extra = '') {
 }
 
 const server = spawn(process.execPath, ['server/index.js'], {
-  env: { ...process.env, PORT: String(PORT), RATE_LIMIT_PER_MINUTE: '6' },
+  env: { ...process.env, PORT: String(PORT), RATE_LIMIT_PER_MINUTE: '15' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 await new Promise((resolve, reject) => {
@@ -82,7 +82,20 @@ try {
   // CORS
   ok(ex.headers.get('access-control-allow-origin') === '*', 'CORS 头正确（§8.3 约束 4）');
 
-  // 限流（限额 6/分，上面 explain 系列已用若干，连打到 429）
+  // 卡点聚合（问题 1）：本地镜像与 scf/index.js 的 POST /stuck 同构，须在限流压测前测
+  const st1 = await post('/api/stuck', { action: 'report', articleId: 'article-backprop', concept: '链式法则', paragraphIndex: 1 });
+  ok(st1.status === 200 && st1.data?.ok === true && st1.data?.count === 1, '卡点上报：首次计数为 1');
+  const st2 = await post('/api/stuck', { action: 'report', articleId: 'article-backprop', concept: '链式法则', paragraphIndex: 1 });
+  ok(st2.data?.count === 2, '卡点上报：同词再报计数递增到 2');
+  await post('/api/stuck', { action: 'report', articleId: 'article-backprop', concept: '过拟合', paragraphIndex: 11 });
+  const stTop = await post('/api/stuck', { action: 'top', articleId: 'article-backprop', topN: 3 });
+  ok(stTop.status === 200 && stTop.data?.items?.length === 2, '卡点聚合：返回该篇全部已报概念');
+  ok(stTop.data?.items?.[0]?.concept === '链式法则' && stTop.data.items[0].count === 2,
+    '卡点聚合：按上报人数降序取 TOP（链式法则 2 领先）');
+  ok(stTop.data?.items?.[0]?.paragraphIndex === 1, '卡点聚合：带出段号供前端跳回原文');
+  ok((await post('/api/stuck', { action: 'report' })).status === 400, '卡点上报：缺 articleId 返回 400');
+
+  // 限流（限额 15/分，上面已用若干，连打到 429）
   let limited = false;
   for (let i = 0; i < 12; i++) {
     const r = await post('/api/explain', { concept: '导数', context: 'x' });

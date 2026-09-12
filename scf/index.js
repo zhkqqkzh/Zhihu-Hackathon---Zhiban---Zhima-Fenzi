@@ -12,6 +12,9 @@
 //                   或 { concept, quote, answer } → { verdict, feedback }
 //   POST /collections 收藏夹体检：{ items: [{ title, excerpt, voteup, comments, score }] }
 //                   → { groups: [{ name, items: [标题] }], reviews: [{ title, level, comment }] }
+//   POST /stuck     卡点聚合：{ action:'report', articleId, concept, paragraphIndex }
+//                   → { ok, concept, count }
+//                   或 { action:'top', articleId, topN } → { items: [{ concept, count, paragraphIndex }] }
 //
 // Node 12 兼容说明：不使用可选链（?.）与空值合并（??）；
 // 无全局 fetch，用内置 https 模块，req.setTimeout(55000) 实现超时
@@ -490,6 +493,65 @@ app.post('/collections', async function (req, res) {
   } catch (e) {
     res.json({ groups: [], reviews: [], _degraded: true, _reason: String((e && e.message) || e).slice(0, 120) });
   }
+});
+
+// ---- 卡点聚合（问题 1：让「你划一下」真的流转到下一个读到的人）----
+// 只收「概念名 + 段号 + 计数」，不收正文、不收任何用户标识。
+// 最小实现：模块级内存聚合，随函数实例存活——现场多台设备打到同一热实例即可互相看到卡点。
+// 如实说明局限：SCF 冷启动或多实例并发时各聚合一份、且非持久化；要稳定跨实例需换云数据库，
+// 不在本次改动范围内。
+var STUCK_AGG = {};       // { [articleId]: { [concept]: { count, paragraphIndex } } }
+var STUCK_MAX_ARTICLES = 200;
+var STUCK_MAX_CONCEPTS = 50;
+
+app.post('/stuck', function (req, res) {
+  var body = req.body || {};
+  var articleId = typeof body.articleId === 'string' ? body.articleId.trim().slice(0, 64) : '';
+  if (!articleId) {
+    res.status(400).json({ error: 'articleId 为必填字符串' });
+    return;
+  }
+  var bucket = STUCK_AGG[articleId];
+  if (!bucket) {
+    // 上限保护：公开接口，防被垃圾 articleId 刷爆实例内存（超出后静默丢弃，不报错）
+    if (Object.keys(STUCK_AGG).length >= STUCK_MAX_ARTICLES) {
+      res.json(body.action === 'top' ? { items: [] } : { ok: false, _capped: true, count: 0 });
+      return;
+    }
+    bucket = {};
+    STUCK_AGG[articleId] = bucket;
+  }
+
+  if (body.action !== 'top') {
+    var concept = typeof body.concept === 'string' ? body.concept.trim().slice(0, 40) : '';
+    if (!concept) {
+      res.status(400).json({ error: 'concept 为必填字符串' });
+      return;
+    }
+    var item = bucket[concept];
+    if (!item) {
+      if (Object.keys(bucket).length >= STUCK_MAX_CONCEPTS) {
+        res.json({ ok: false, _capped: true, concept: concept, count: 0 });
+        return;
+      }
+      item = { count: 0, paragraphIndex: null };
+      bucket[concept] = item;
+    }
+    item.count += 1;
+    if (typeof body.paragraphIndex === 'number' && body.paragraphIndex >= 0) {
+      item.paragraphIndex = body.paragraphIndex;
+    }
+    res.json({ ok: true, concept: concept, count: item.count });
+    return;
+  }
+
+  var topN = Number(body.topN) || 3;
+  if (topN < 1) topN = 1;
+  if (topN > 10) topN = 10;
+  var items = Object.keys(bucket).map(function (c) {
+    return { concept: c, count: bucket[c].count, paragraphIndex: bucket[c].paragraphIndex };
+  }).sort(function (a, b) { return b.count - a.count; }).slice(0, topN);
+  res.json({ items: items });
 });
 
 // SCF Web 函数通过模板适配层托管；本地直接运行 node index.js 便于联调

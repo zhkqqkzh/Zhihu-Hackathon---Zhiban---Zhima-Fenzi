@@ -1,4 +1,5 @@
-// 数据层（§9）：所有记录仅存本浏览器，不上传服务器。
+// 数据层（§9）：正文、阅读史、概念记录、笔记一律只存本浏览器，不上传服务器。
+// 唯一例外是卡点：上报「概念名 + 段号 + 计数」做匿名聚合（见 addStuckMark），便于多个读者互相看到卡点。
 // 覆盖 §9.1 文章记录 / §9.2 概念记录 / 预扫描缓存 / 导读 / 提问记录。
 // 铁律 1：全部异步。键前缀统一 'zb:'，一键删除即清空前缀。
 
@@ -182,7 +183,21 @@ export async function addStuckMark(articleId, mark) {
     { concept: mark.concept, paragraphIndex: mark.paragraphIndex ?? null, startOffset: mark.startOffset || 0, endOffset: mark.endOffset || 0, at: Date.now() },
   ];
   await storage.set(STUCK_KEY(articleId), { articleId, marks, at: Date.now() });
+  reportStuckQuietly(articleId, mark);
   return marks;
+}
+
+// 匿名上报一次（只带「概念名 + 段号」），让卡点流到下一个读到的人（改造方案 §三）。
+// 不 await：本地记录已经写好，界面不该为一个网络请求等待；失败也静默——离线照样能记。
+// 懒加载 api.js：api.js 运行时才反向引用 store.js，静态互引会成环（见 api.js ensureQuizQuestion）。
+function reportStuckQuietly(articleId, mark) {
+  import('./api.js')
+    .then(({ api }) => api.reportStuck({
+      articleId,
+      concept: mark.concept,
+      paragraphIndex: mark.paragraphIndex ?? null,
+    }))
+    .catch(() => {});
 }
 
 // ---- 元信息：首访引导 / 复盘时间等 ----

@@ -251,5 +251,31 @@ eq(stuckSourceLabel({ seedCount: 964, localCount: 1 }), '演示环境数据 + �
 eq(stuckSourceLabel(mergeStuck('article-backprop', [{ concept: '过拟合' }], 9).find((s) => s.concept === '过拟合')),
   '你的上报', '卡点：聚合结果直接可判来源');
 
+// --- stuck：社区聚合三源（问题 1：seed + 你的上报 + 社区上报）---
+// 后端聚合已包含本机那一次上报，前端只叠加「超出本地计数」的部分，避免同一个人被算两遍。
+const chainCommunity = mergeStuck('article-backprop', [], null, [{ concept: '链式法则', count: 17, paragraphIndex: 1 }])
+  .find((s) => s.concept === '链式法则');
+eq(chainCommunity.count, 1300, '社区聚合：seed 1283 + 社区 17');
+eq(chainCommunity.seedCount, 1283, '社区聚合：seed 计数单独保留');
+eq(chainCommunity.localCount, 0, '社区聚合：本机没报过则为 0');
+eq(chainCommunity.communityCount, 17, '社区聚合：别台设备的 17 次单独记为社区上报');
+eq(stuckSourceLabel(chainCommunity), '演示环境数据 + 社区上报', '社区聚合：来源如实标注，不把演示数据冒充真实统计');
+
+const chainDedup = mergeStuck('article-backprop', [{ concept: '链式法则', paragraphIndex: 1 }], null,
+  [{ concept: '链式法则', count: 17 }]).find((s) => s.concept === '链式法则');
+eq(chainDedup.count, 1300, '社区聚合：本机那一次不重复计入（1283 seed + 1 你 + 16 别人）');
+eq(chainDedup.communityCount, 16, '社区聚合：社区计数去掉本机已报的那一次（17 - 1）');
+eq(stuckSourceLabel(chainDedup), '演示环境数据 + 你的上报 + 社区上报', '社区聚合：三源叠加同时标出');
+
+const communityOnly = mergeStuck('article-backprop', [], null, [{ concept: '过拟合', count: 5, paragraphIndex: 11 }])
+  .find((s) => s.concept === '过拟合');
+eq(communityOnly.count, 5, '社区聚合：seed 没有的词也能从社区进入列表');
+eq(communityOnly.paragraphIndex, 11, '社区聚合：带上别台设备上报的段号，可跳回原文');
+eq(stuckSourceLabel(communityOnly), '社区上报', '社区聚合：纯社区来源只标「社区上报」');
+
+const insightCommunity = topStuckInsight('article-backprop', bpStuckArticle, [], [{ concept: '链式法则', count: 17 }]);
+eq(insightCommunity.count, 1300, '首页洞察：社区聚合透传到洞察（问题 1 闭环）');
+eq(stuckSourceLabel(insightCommunity), '演示环境数据 + 社区上报', '首页洞察：来源标注含社区上报');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
