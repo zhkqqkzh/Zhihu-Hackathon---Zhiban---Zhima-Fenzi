@@ -95,4 +95,5 @@ window.__zhiban = {
   openSidebar: () => import('./sidebar.js').then((m) => m.openSidebar('tail')),
   listConcepts: () => import('./store.js').then((m) => m.listConcepts()),
   warmup: () => import('./api.js').then((m) => m.warmup()),
+  loadRealArticles: (q) => import('./knowledge-source.js').then((m) => m.loadRealArticles(q)),
 };

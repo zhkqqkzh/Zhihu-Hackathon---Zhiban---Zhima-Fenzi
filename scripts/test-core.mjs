@@ -11,6 +11,8 @@ import { interceptSelection } from '../demo/js/core/stopwords.js';
 import { isReviewDue, pickTopGaps, buildWeeklyReview, REVIEW_INTERVAL_DAYS } from '../demo/js/core/review.js';
 import { safeFileName, noteToMarkdown, formatTime } from '../demo/js/core/note.js';
 import { mergeStuck, stuckCount, hasStuckMark, stuckSourceLabel, topStuckInsight, buildCreatorReport, articleIdFromLink, formatCount } from '../demo/js/core/stuck.js';
+import { sourceId, hitToArticle, SOURCE_REAL } from '../demo/js/app/knowledge-source.js';
+import stuckStoreModule from '../scf/stuck-store.js';
 
 let pass = 0, fail = 0;
 function eq(actual, expected, label) {
@@ -276,6 +278,42 @@ eq(stuckSourceLabel(communityOnly), '社区上报', '社区聚合：纯社区来
 const insightCommunity = topStuckInsight('article-backprop', bpStuckArticle, [], [{ concept: '链式法则', count: 17 }]);
 eq(insightCommunity.count, 1300, '首页洞察：社区聚合透传到洞察（问题 1 闭环）');
 eq(stuckSourceLabel(insightCommunity), '演示环境数据 + 社区上报', '首页洞察：来源标注含社区上报');
+
+// --- P1 真实内容接入：zhihu_search 命中 → 文章归一化（纯函数，无需网络）---
+const hitA = {
+  title: '如何通俗理解反向传播', author: '张三', url: 'https://www.zhihu.com/question/1/answer/2',
+  excerpt: '反向传播的核心是链式法则 <script>alert(1)</script>', voteupCount: 99, commentCount: 7,
+};
+const realA = hitToArticle(hitA);
+eq(realA.source, SOURCE_REAL, 'P1：真实内容如实标记来源（与内置范文区分）');
+eq(realA.id, sourceId(hitA), 'P1：文章 id 由 URL 稳定派生');
+eq(sourceId(hitA), sourceId({ url: 'https://www.zhihu.com/question/1/answer/2' }),
+  'P1：同 URL 恒定同 id，重复接入不产生重复文章');
+eq(realA.author, '张三', 'P1：作者透传');
+eq(realA.voteupCount, 99, 'P1：赞数透传');
+eq(realA.sourceUrl, hitA.url, 'P1：保留原文链接');
+ok(realA.body.includes('反向传播的核心是链式法则'), 'P1：摘要进正文（官方接口只给摘要，如实包裹）');
+ok(!realA.body.includes('<script'), 'P1：摘要经转义，不注入 HTML（§13.3 XSS 防线）');
+ok(realA.body.includes(hitA.url), 'P1：正文带原文链接');
+eq(hitToArticle({ title: '', url: 'https://x' }), null, 'P1：缺标题的命中被丢弃');
+eq(hitToArticle({ title: '标题', url: '' }), null, 'P1：缺链接的命中被丢弃');
+eq(hitToArticle(null), null, 'P1：空命中返回 null');
+const noExcerpt = hitToArticle({ title: '只有标题', url: 'https://www.zhihu.com/question/3/answer/4' });
+ok(noExcerpt && noExcerpt.body.includes('知乎原文'), 'P1：没有摘要时只给标题 + 原文链接，不编造正文');
+
+// --- C1：卡点聚合存储（可插拔后端 + 内存兜底，接口永不 reject）---
+delete process.env.STUCK_REDIS_URL;
+eq(stuckStoreModule.createStuckStore().kind, 'memory', 'C1：未配 STUCK_REDIS_URL 时用内存兜底（无凭据也能跑）');
+
+const memStore = stuckStoreModule.createMemoryStore();
+eq(await memStore.getBucket('article-backprop'), null, 'C1：未知文章返回 null');
+eq(await memStore.articleCount(), 0, 'C1：初始文章数为 0');
+await memStore.setBucket('article-backprop', { 链式法则: { count: 2, paragraphIndex: 1 } });
+eq(await memStore.getBucket('article-backprop'), { 链式法则: { count: 2, paragraphIndex: 1 } },
+  'C1：上报写回后可读回（跨请求共享同一存储）');
+eq(await memStore.articleCount(), 1, 'C1：新增文章后计数 +1（供上限保护）');
+await memStore.setBucket('article-backprop', { 链式法则: { count: 3, paragraphIndex: 1 }, 过拟合: { count: 1, paragraphIndex: 11 } });
+eq(await memStore.articleCount(), 1, 'C1：同文章再写不重复计文章数');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

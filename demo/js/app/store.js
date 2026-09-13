@@ -176,6 +176,17 @@ export async function deleteNote(id) { await storage.remove(NOTE_KEY(id)); }
 export async function getStuckMarks(articleId) {
   return (await storage.get(STUCK_KEY(articleId)))?.marks || [];
 }
+// 列出本浏览器全部现场上报（个人中心「我的贡献」用）：每条带上所属 articleId，按时间倒序。
+export async function listStuckMarks() {
+  const keys = await storage.keys(STUCK_KEY(''));
+  const out = [];
+  for (const k of keys) {
+    const r = await storage.get(k);
+    if (!r || !Array.isArray(r.marks)) continue;
+    for (const m of r.marks) out.push({ ...m, articleId: r.articleId });
+  }
+  return out.sort((a, b) => (b.at || 0) - (a.at || 0));
+}
 export async function addStuckMark(articleId, mark) {
   const cur = await getStuckMarks(articleId);
   const marks = [

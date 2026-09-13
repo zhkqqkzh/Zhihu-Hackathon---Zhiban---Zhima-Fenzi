@@ -139,6 +139,69 @@
 .pf-card-desc { font-size: 13px; color: #8590a6; margin-top: 4px; line-height: 1.6; }
 .pf-card-more { font-size: 12px; color: #056de8; margin-top: 10px; }
 
+/* ============ 个人中心 · 新模块（我的笔记 / 学习复盘 / 阅读足迹） ============ */
+/* 数值卡片 */
+.pf-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 4px 0 12px; }
+.pf-stat { background: #f7f9fc; border: 1px solid var(--zb-border); border-radius: 8px; padding: 12px 14px; }
+.pf-stat-value { font-size: 20px; font-weight: 700; color: #056de8; line-height: 1.2; }
+.pf-stat-label { font-size: 12px; color: #8590a6; margin-top: 4px; }
+
+/* 笔记卡片 */
+.pf-note { border: 1px solid var(--zb-border); border-radius: 8px; padding: 10px 12px; margin-top: 8px; transition: border-color .15s; }
+.pf-note:hover { border-color: #056de8; }
+.pf-note-head { display: flex; align-items: center; gap: 8px; }
+.pf-note-kind { flex: none; font-size: 11px; border-radius: 10px; padding: 1px 8px; color: #056de8; background: #eaf2fe; border: 1px solid #cfe0fb; }
+.pf-note-kind.guide { color: #ad6800; background: #fff7e6; border-color: #ffe1a8; }
+.pf-note-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-note-time { flex: none; font-size: 12px; color: #8590a6; }
+.pf-note-body { font-size: 13px; line-height: 1.7; color: #444; margin-top: 6px; }
+.pf-note-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* 小按钮与小标签 */
+.pf-btn { border: 1px solid #e0e5ee; background: #fff; border-radius: 6px; padding: 4px 12px; font-size: 12px; color: #444; cursor: pointer; }
+.pf-btn:hover { border-color: #056de8; color: #056de8; }
+.pf-btn.danger:hover { border-color: #d93025; color: #d93025; }
+.pf-tag { flex: none; font-size: 11px; border-radius: 10px; padding: 1px 8px; border: 1px solid transparent; white-space: nowrap; }
+.pf-tag.ok { color: #2f8f4b; background: #f0f9f2; border-color: #cfe9d6; }
+.pf-tag.due { color: #d67a27; background: #fff7e6; border-color: #ffe1a8; }
+.pf-link { flex: none; font-size: 12px; color: #056de8; cursor: pointer; }
+.pf-link:hover { text-decoration: underline; }
+
+/* ============ 个人中心 · §6 困惑双面镜（首屏叙事 / 我最常卡住 / 我的贡献） ============ */
+/* 首屏叙事 */
+.pf-hero .pf-lead { font-size: 15px; line-height: 1.8; color: #1a1a1a; margin-top: 6px; }
+.pf-hero .pf-lead b { color: #056de8; font-size: 18px; }
+.pf-hero .pf-source { font-size: 12px; color: #8590a6; margin-top: 6px; }
+.pf-hero .pf-sub { font-size: 13px; color: #444; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e0e5ee; }
+.pf-hero .pf-sub b { color: #056de8; }
+
+/* 你最常卡住的 3 个概念 */
+.pf-concepts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 8px; }
+.pf-concept-card { background: #f2f7ff; border: 1px solid #d8e6ff; border-radius: 8px; padding: 14px 16px; }
+.pf-concept-name { font-size: 16px; font-weight: 700; color: #056de8; }
+.pf-concept-mine { font-size: 13px; color: #444; margin-top: 6px; }
+.pf-concept-comm { font-size: 13px; color: #444; margin-top: 2px; }
+.pf-concept-src { font-size: 11px; color: #8590a6; margin-top: 8px; }
+
+/* 我的贡献 · 卡点地图 */
+.pf-map-list { margin-top: 8px; }
+.pf-map-item { border: 1px solid var(--zb-border); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+.pf-map-head { display: flex; align-items: center; gap: 8px; }
+.pf-map-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; }
+.pf-map-mine { flex: none; font-size: 12px; color: #d67a27; }
+.pf-map-meta { font-size: 13px; color: #444; margin-top: 4px; }
+.pf-map-src { font-size: 11px; color: #8590a6; margin-top: 4px; }
+
+/* 我的贡献 · 时间线 */
+.pf-timeline { margin-top: 10px; border-left: 2px solid #e0e5ee; padding-left: 14px; }
+.pf-tl-item { position: relative; padding-bottom: 14px; }
+.pf-tl-item::before { content: ''; position: absolute; left: -21px; top: 5px; width: 8px; height: 8px; border-radius: 50%; background: #056de8; }
+.pf-tl-date { font-size: 12px; color: #8590a6; }
+.pf-tl-line { font-size: 14px; color: #1a1a1a; margin-top: 2px; }
+.pf-tl-line b { color: #056de8; }
+.pf-tl-para { font-size: 12px; color: #8590a6; }
+.pf-tl-sub { font-size: 12px; color: #8590a6; margin-top: 2px; }
+
 /* ============ 个人中心 · 知乎区块（账号 / 收藏夹体检 / 分类导图） ============ */
 /* 账号卡 */
 .zb-zhihu-account { display: flex; align-items: center; gap: 14px; }

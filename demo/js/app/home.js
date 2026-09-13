@@ -7,6 +7,7 @@ import { ARTICLES, ARTICLE_BY_ID } from '../data/articles.js';
 import { el } from './ui.js';
 import { listGuides, getStuckMarks } from './store.js';
 import { api } from './api.js';
+import { loadRealArticles } from './knowledge-source.js';
 import { navigate } from './router.js';
 import { topStuckInsight, mergeStuck, formatCount, stuckSourceLabel } from '../core/stuck.js';
 import { gotoAnchor } from './hub.js';
@@ -43,6 +44,10 @@ export async function renderHome(app) {
       ])
     )),
   ]));
+
+  // P1 真实内容接入（§7.2）：内置 3 篇是演示范文；这里按用户输入的关键词去拉知乎官方
+  // 搜索接口的真实命中，追加在内置之后；拉不到就如实说明，绝不拿演示数据冒充真实内容。
+  parts.push(renderRealSearch());
 
   // P1：全文概念标记 + 每周复盘，都是零操作。
   parts.push(el('div', { class: 'HomeGuide' }, [
@@ -98,18 +103,87 @@ export async function renderHome(app) {
     .catch(() => {});
 }
 
+// P1 真实内容接入：一个搜索框，用户输入关键词才发请求（不臆造查询词，零输入零请求）。
+// 结果如实标「真实知乎」；接口未配置/失效/只返回演示数据时，给一句诚实说明，内置 3 篇照常。
+function renderRealSearch() {
+  const listBox = el('div', { class: 'ArticleList' });
+  const status = el('div', { class: 'RealStatus', text: '' });
+  const input = el('input', {
+    class: 'real-input',
+    type: 'search',
+    placeholder: '输入关键词，搜知乎上真实存在的回答（例如：反向传播）',
+  });
+
+  const submit = async () => {
+    const q = input.value.trim();
+    if (!q) { status.textContent = '请先输入一个关键词。'; return; }
+    submitBtn.disabled = true;
+    status.textContent = `正在搜「${q}」…`;
+    listBox.replaceChildren();
+    const items = await loadRealArticles(q);
+    submitBtn.disabled = false;
+    if (!items.length) {
+      status.textContent = '没拉到真实结果（接口未配置或暂时不可用）。上面内置的 3 篇照常可读，不影响任何功能。';
+      return;
+    }
+    status.textContent = `以下 ${items.length} 篇来自知乎官方搜索接口，如实标注为「真实知乎」；点开可照常划词、记卡点。`;
+    for (const a of items) listBox.append(realCard(a));
+  };
+  const submitBtn = el('button', { class: 'zb-btn', text: '搜真实知乎', onclick: submit });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+  return el('div', { class: 'HomeReal' }, [
+    el('h2', { text: '内置 3 篇是范文；这里可以拉知乎上真实存在的回答' }),
+    el('div', { class: 'lead', text: '输入关键词，去知乎官方搜索接口拿真实命中，追加在下面。拿不到就不显示——绝不把演示数据说成真实内容。' }),
+    el('div', { class: 'RealSearch' }, [input, submitBtn]),
+    status,
+    listBox,
+  ]);
+}
+
+function realCard(a) {
+  return el('div', { class: 'ArticleCard', onclick: () => navigate(`/article/${a.id}`) }, [
+    el('h3', { text: a.title }),
+    el('div', { class: 'meta' }, [
+      el('span', { text: `${a.author} · ${formatCount(a.voteupCount)} 赞同` }),
+      el('span', { class: 'real-tag', text: '真实知乎' }),
+    ]),
+  ]);
+}
+
 // 首屏洞察三句话（§4.1）：赞数、同一段的卡住人数、最热的那一个词。
 // 数字全部可追溯，末尾补一句来源与占比，绝不把演示数据说成真实统计。
 function renderInsight(article, insight, topStuck) {
   return el('div', { class: 'HomeInsight' }, buildInsightChildren(article, insight, topStuck));
 }
 
+// §1 主视觉：知乎「知道」的 vs 知乎「不知道」的。
+// 左半用知乎灰摆「结果」（赞/评论，静态、真实字段）；右半用品牌色摆「过程」（读停段/同卡词/同卡人数，动态）。
+// 中间一道裂痕点破「知乎知道结果，不知道过程」——这是全项目最强的一张图（修 C2/C3）。
 function buildInsightChildren(article, insight, topStuck) {
+  // 第二高频卡点：让右半不只有「同一个词」，还看得见「接着还会卡在哪」。
+  const second = topStuck[1];
   return [
-    // 赞数同样来自 Demo 文章数据的写死字段（data/articles.js），与卡点数据一样如实标注，不冒充真实统计。
-    el('div', { class: 'insight-line', html: `这篇回答有 <b>${formatCount(insight.voteupCount)}</b> 人赞同。<span class="demo-tag">示例数据</span>` }),
-    el('div', { class: 'insight-line', html: `但读到第 <b>${insight.paragraph}</b> 段，就有 <b>${formatCount(insight.count)}</b> 人卡住了。` }),
-    el('div', { class: 'insight-line', html: `卡住他们的，是同一个词：<b>${insight.concept}</b>。` }),
+    el('div', { class: 'insight-compare' }, [
+      el('div', { class: 'insight-col insight-know' }, [
+        el('div', { class: 'insight-col-head', text: '知乎「知道」的' }),
+        // 赞数取自 data/articles.js 的写死字段，与卡点数据一样如实标注，不冒充真实统计。
+        el('div', { class: 'insight-metric', html: `👍 <b>${formatCount(insight.voteupCount)}</b> 人赞同<span class="demo-tag">示例数据</span>` }),
+        el('div', { class: 'insight-metric', html: `💬 <b>${formatCount(article.commentCount || 0)}</b> 条评论` }),
+        el('div', { class: 'insight-col-foot', text: '热闹，但说的是「结果」' }),
+      ]),
+      el('div', { class: 'insight-crack', text: '知乎知道结果，不知道过程' }),
+      el('div', { class: 'insight-col insight-unknown' }, [
+        el('div', { class: 'insight-col-head', text: '知乎「不知道」的 ← 知伴补上这条' }),
+        el('div', { class: 'insight-metric', html: `📍 读者读到第 <b>${insight.paragraph}</b> 段就停了` }),
+        el('div', { class: 'insight-metric', html: `🔴 卡住他们的，是同一个词：<b>${insight.concept}</b>` }),
+        second ? el('div', { class: 'insight-metric', html: `🧩 紧接着还会卡在「<b>${second.concept}</b>」` }) : null,
+        el('div', { class: 'insight-metric', html: `👥 <b>${formatCount(insight.count)}</b> 人也卡在这` }),
+        el('div', { class: 'insight-col-foot', text: '安静，但说的是「过程」——「吸收」的断点，就在这' }),
+        // §1 落点：右半底部一句行动句。
+        el('div', { class: 'insight-cta', text: '知伴，让你卡住的地方，也成为别人读得懂的地方。' }),
+      ]),
+    ]),
     el('div', { class: 'insight-note', text: `全部卡点里有 ${insight.share}% 落在同一个词上 · 数据来源：${stuckSourceLabel(insight)}` }),
     el('div', { class: 'insight-stuck' }, topStuck.map((s, i) =>
       el('div', { class: 'insight-stuck-item', onclick: () => gotoAnchor(article.id, { ...s, text: s.concept }) }, [

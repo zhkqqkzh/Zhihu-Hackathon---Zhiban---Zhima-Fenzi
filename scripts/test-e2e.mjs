@@ -385,6 +385,90 @@ try {
   const homeCommunity = await poll(`document.getElementById('app').textContent.includes('社区上报') ? document.getElementById('app').textContent : null`, 8000);
   ok(!!homeCommunity && homeCommunity.includes('演示环境数据 + 社区上报'),
     '首页读回社区聚合并如实标注「演示环境数据 + 社区上报」（问题 1 飞轮可见）');
+
+  // 10. 个人中心（改造方案 §6 困惑双面镜）：首屏讲飞轮、卡点数字一律三源标注、贡献可下钻、收藏体检重定位。
+  await evaluate(`location.hash = '#/profile'`);
+  await sleep(900);
+  ok(!!(await poll(`document.querySelector('.pf-layout .pf-nav') ? 'pf' : null`, 8000)),
+    '个人中心外壳渲染（侧栏 + 主区，§6.3）');
+  const pfNav = await evaluate(`[...document.querySelectorAll('.pf-nav-item')].map((e) => e.textContent.trim())`);
+  ok(Array.isArray(pfNav) && pfNav.length === 8 && pfNav.some((t) => t.includes('我的贡献')),
+    `个人中心模块导航含「我的贡献」（${pfNav?.length} 项，§6.3 次级导航）`);
+
+  // §6.2 首屏第一句：把「你卡一下 → 别人少卡一次」的飞轮讲出来，并如实标注来源
+  const pfHero = await evaluate(`JSON.stringify({
+    lead: document.querySelector('.pf-hero .pf-lead')?.textContent ?? '',
+    source: document.querySelector('.pf-hero .pf-source')?.textContent ?? ''
+  })`);
+  const heroData = JSON.parse(pfHero);
+  ok(heroData.lead.includes('你卡住的地方') && heroData.lead.includes('帮下一个读到的人少卡一次'),
+    '个人中心首屏讲清飞轮（§6.2：你卡一下，别人少卡一次）');
+  ok(heroData.source.startsWith('数据来源：'),
+    '个人中心卡点数字如实标注来源，不冒充社区（§6.6）');
+
+  // §6.3 你最常卡住的 3 个概念：逐卡标来源
+  const conceptCards = JSON.parse(await evaluate(`JSON.stringify([...document.querySelectorAll('.pf-concept-card')].map((c) => ({
+    name: c.querySelector('.pf-concept-name')?.textContent ?? '',
+    src: c.querySelector('.pf-concept-src')?.textContent ?? ''
+  })))`));
+  ok(conceptCards.length >= 1 && conceptCards.length <= 3 && conceptCards.every((c) => c.name && c.src.startsWith('来源：')),
+    `个人中心列出最常卡住的概念并逐卡标来源（${conceptCards.length} 个）`);
+
+  // §6.4 下钻「我的贡献」：贡献总览 + 卡点地图，每个社区数字都带来源
+  await evaluate(`document.querySelectorAll('.pf-nav-item')[1].click()`);
+  await sleep(400);
+  const contribution = await evaluate(`(() => {
+    const t = document.getElementById('app').textContent;
+    return JSON.stringify({
+      head: document.querySelector('.pf-main h1')?.textContent ?? '',
+      stats: document.querySelectorAll('.pf-main .pf-stat').length,
+      mapItems: [...document.querySelectorAll('.pf-map-item')].map((e) => e.textContent),
+      c1: t.includes('被多少人看到') && t.includes('C1'),
+    });
+  })()`);
+  const contrib = JSON.parse(contribution);
+  ok(contrib.head.includes('我的贡献') && contrib.stats === 3,
+    `「我的贡献」贡献总览三卡（§6.4：${contrib.stats} 张）`);
+  ok(contrib.mapItems.length >= 1 && contrib.mapItems.every((t) => t.includes('来源：')),
+    `「我的贡献」卡点地图逐条标来源（${contrib.mapItems.length} 条）`);
+  ok(contrib.c1, '「我的贡献」如实说明「被看到/帮到」需等 C1 持久化，不编造社区数字（§6.6）');
+
+  // §6.5 收藏体检重定位：这些收藏里，哪些概念你其实没真懂
+  await evaluate(`document.querySelectorAll('.pf-nav-item')[2].click()`);
+  await sleep(400);
+  const checkup = await evaluate(`JSON.stringify({
+    head: document.querySelector('.pf-main h1')?.textContent ?? '',
+    sub: document.querySelector('.pf-main .hub-hero .sub')?.textContent ?? '',
+    body: document.querySelector('.pf-main')?.textContent ?? ''
+  })`);
+  const chk = JSON.parse(checkup);
+  ok(chk.head.includes('收藏体检') && chk.sub.includes('哪些概念你其实没真懂'),
+    '收藏体检重定位为「这些收藏里，哪些概念你其实没真懂」（§6.5）');
+  ok(chk.body.includes('该补的信号') || chk.body.includes('没读完'),
+    '收藏体检用本地足迹压出「该补信号」，不再空死（§6.5）');
+
+  // 11. P1 真实内容接入（§7.2）：本地未配知乎密钥 → /api/search 如实返回演示数据（_mock）→
+  // 前端必须识别并硬降级为空，绝不把演示数据冒充「真实知乎」；内置 3 篇照常呈现，永不白屏。
+  await evaluate(`location.hash = '#/'`);
+  await sleep(700);
+  ok(!!(await poll(`document.querySelector('.HomeReal .real-input') ? 'real' : null`, 8000)),
+    'P1：首页出现「真实知乎」搜索区块（追加在内置 3 篇之后）');
+  ok(await evaluate(`document.querySelectorAll('.HomeHero .ArticleCard').length`) === 3,
+    'P1：内置 3 篇仍是首页主列表，不受真实内容接入影响');
+  const apiSearch = await fetch(BASE + '/api/search', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: '反向传播' }),
+  }).then((r) => r.json());
+  ok(apiSearch?._mock === true, 'P1：本地未配密钥时 /api/search 如实返回演示数据（_mock）');
+  ok((await evaluate(`window.__zhiban.loadRealArticles('反向传播').then((r) => JSON.stringify(r))`)) === '[]',
+    'P1：前端识别 _mock / _degraded 并硬降级为空，不把演示数据冒充真实知乎（§7.2 红线）');
+  await evaluate(`(() => { const i = document.querySelector('.HomeReal .real-input'); i.value = '反向传播'; document.querySelector('.HomeReal .zb-btn').click(); return 'submitted'; })()`);
+  ok(!!(await poll(`document.querySelector('.HomeReal .RealStatus')?.textContent.includes('没拉到真实结果') ? 'degraded' : null`, 8000)),
+    'P1：拉不到真实内容时给诚实说明，不编造结果');
+  ok(await evaluate(`document.querySelectorAll('.HomeReal .ArticleCard').length`) === 0,
+    'P1：没有真实结果就不渲染任何卡片（不冒充）');
+  ok(await evaluate(`document.querySelectorAll('.HomeHero .ArticleCard').length`) === 3,
+    'P1：硬降级后内置 3 篇照常呈现，永不白屏（§7.2）');
 } catch (e) {
   fail++;
   console.error('E2E aborted:', e.message);
