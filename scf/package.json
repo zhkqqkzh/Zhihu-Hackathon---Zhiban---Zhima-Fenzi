@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "commonjs",
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "redis": "^4.7.0"
   }
 }

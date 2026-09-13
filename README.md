@@ -109,8 +109,9 @@
 │   └── config.js / mock.js / llm.js / prompts.js / ratelimit.js
 ├── scf/                   # ★ 生产后端：腾讯云 SCF Web 函数（Node 12 兼容）
 │   ├── index.js           #   /ping /ask /prescan /search /quiz /collections
+│   ├── stuck-store.js     #   卡点聚合存储适配层（默认内存 / 配 STUCK_REDIS_URL 走 Redis）
 │   ├── scf_bootstrap      #   自定义运行时启动脚本（0755）
-│   └── package.json       #   仅声明 express 依赖
+│   └── package.json       #   声明 express + redis 依赖（redis 仅卡点持久化用）
 ├── extension/             # Chrome MV3 插件（最终形态）
 │   ├── manifest.json      #   MV3；permissions: storage；host: 知乎 + *.tencentscf.com
 │   ├── src/
@@ -294,7 +295,13 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 ### 8.1 SCF 云函数
 线上地址：`https://1399201542-7y33vuteqi.ap-beijing.tencentscf.com`（与 `demo/js/app/api.js` 的 `SCF_BASE`、`extension/src/background.js` 保持一致）
 
-1. 函数配置 → 上传 `scf/zhiban-scf.zip`（zip 根目录必须含 `scf_bootstrap`/`index.js`/`package.json`/`node_modules`，正斜杠路径；重新打包脚本见 git 历史或按 `extension/build.mjs` 同款 Python zipfile 方式）
+1. 函数配置 → 上传 `scf/zhiban-scf.zip`（zip 根目录必须含 `scf_bootstrap`/`index.js`/`stuck-store.js`/`package.json`/`node_modules`，正斜杠路径）。重新打包：
+
+   ```powershell
+   cd scf ; npm install
+   Compress-Archive -Path scf_bootstrap,index.js,stuck-store.js,package.json,node_modules -DestinationPath zhiban-scf.zip -Force
+   cd .. ; python scripts/fix-scf-zip.py   # 修反斜杠 + scf_bootstrap 可执行位
+   ```
 2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）、`STUCK_REDIS_URL`（可选，卡点聚合持久化，不配则进程内存）；执行超时 **60 秒**
 3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections` → `POST /stuck`（`{"action":"report",…}` 再 `{"action":"top",…}` 应能读回计数）
 4. 改过 `scf/index.js` 后**必须重新打包上传**，否则线上仍是旧 prompt——`/ask` 的 `is_concept` 非概念拦截（问题清单 P0-2）依赖这一步才会生效
