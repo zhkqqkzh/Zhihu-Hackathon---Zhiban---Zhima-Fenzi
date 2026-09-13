@@ -305,7 +305,7 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
    ```
 2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）、`STUCK_REDIS_URL`（可选，卡点聚合持久化，不配则进程内存）；执行超时 **60 秒**
    - `STUCK_REDIS_URL` 取值来源：腾讯云 Redis 控制台「实例详情 → 连接信息」抄 **内网地址(host) / 端口(port) / 密码**，拼成 `redis://:<密码>@<host>:<port>/0`（开启 SSL 的实例用 `rediss://`；密码含 `@` `:` `/` 等特殊字符需 URL 编码，如 `@`→`%40`）。函数与实例**须同地域**，优先走内网地址（VPC 内网）。
-   - 改环境变量后**无需重新打包上传**，保存即生效；验证口径：`POST /stuck {"action":"report"}` 上报 → 等函数冷启动/换实例 → `{"action":"top"}` 仍能读回计数。若函数日志出现 `[stuck-store] Redis 不可用，后续降级内存：…`，即连接信息有误（host/密码/网络不通）：此时按内存兜底照常服务（不报错、不卡请求），但跨实例共享失效，需回查连接串。
+   - **仅改环境变量（代码未动）无需重新打包上传**，保存即生效；但代码有改动须先按第 1 步换包（见第 4 点）。验证口径（探针用独立 `articleId`，不打脏真实文章）：先 `POST /stuck {"action":"report","articleId":"article-probe-baseline","concept":"__probe__","paragraphIndex":1}`，空闲 ≥150s 等实例回收，再 `POST /stuck {"action":"top","articleId":"article-probe-baseline"}`，应仍返回 `count:1`（**接通前实测同一探针返回 `items:[]`**，即内存态已随实例回收丢失）。若函数日志出现 `[stuck-store] Redis 不可用，后续降级内存：…`，即连接信息有误（host/密码/网络不通）：此时按内存兜底照常服务（不报错、不卡请求），但跨实例共享失效，需回查连接串。
 3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections` → `POST /stuck`（`{"action":"report",…}` 再 `{"action":"top",…}` 应能读回计数）
 4. 改过 `scf/index.js` / `scf/stuck-store.js` 后**必须重新打包上传**，否则线上仍是旧代码——`/ask` 的 `is_concept` 非概念拦截（问题清单 P0-2）、`/stuck` 的「Redis 不可达 5 秒内降级、不悬挂到函数超时」都依赖这一步才会生效
 
