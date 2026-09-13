@@ -315,5 +315,16 @@ eq(await memStore.articleCount(), 1, 'C1：新增文章后计数 +1（供上限�
 await memStore.setBucket('article-backprop', { 链式法则: { count: 3, paragraphIndex: 1 }, 过拟合: { count: 1, paragraphIndex: 11 } });
 eq(await memStore.articleCount(), 1, 'C1：同文章再写不重复计文章数');
 
+// Redis 配了但不可达 → 必须快速降级（回归：node-redis 默认无限重连，connect() 永不落定，会让 /stuck 悬挂到函数 60s 超时）
+process.env.STUCK_REDIS_URL = 'redis://127.0.0.1:6399/0';
+const deadStore = stuckStoreModule.createStuckStore();
+const deadAt = Date.now();
+eq(await deadStore.getBucket('article-backprop'), null, 'C1：Redis 不可达时 getBucket 降级返回 null（不 reject）');
+await deadStore.setBucket('article-backprop', { 梯度下降: { count: 1, paragraphIndex: 2 } });
+eq(await deadStore.getBucket('article-backprop'), { 梯度下降: { count: 1, paragraphIndex: 2 } },
+  'C1：Redis 不可达时降级内存，写回可读（契约不变）');
+ok(Date.now() - deadAt < 5000, 'C1：Redis 不可达时快速降级，不悬挂到函数超时');
+delete process.env.STUCK_REDIS_URL;
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

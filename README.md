@@ -9,7 +9,7 @@
 >
 > 旧的落点是「你看懂了」，新的落点是：**你让所有人都少卡一次。**
 
-**线上 Demo**：<https://z.toply.top/zhiban-demo/>（独立域名 <https://zhihu.toply.top/> 同步部署，DNS 生效后启用）
+**线上 Demo**：<https://z.toply.top/zhiban-demo/>（独立域名 <https://zhihu.toply.top/> 同步部署，HTTPS 实测 200）
 
 ---
 
@@ -158,12 +158,12 @@ export ZHIHU_ACCESS_SECRET=xxx
 
 ```bash
 npm run check        # 全量 JS 语法（node --check，含 SCF 产物 scf/）+ 模块导入解析（路径/具名/默认导出）；当前 67 文件 0 失败
-npm run test:core    # 核心算法 159 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
+npm run test:core    # 核心算法 162 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
                      # 边加权/缺口Top1/聚类/策展排序/回访间隔/难度三档/停用词拦截/
                      # explain 结构漂移解包（answer 包装/平铺/非概念短路）/
                      # 每周复盘（7 天触发口径/掌握率/Top 缺口）/笔记 Markdown 生成（文件名清洗/时间戳）/
                      # 卡点聚合（seed+现场上报+社区聚合三源叠加与去重/TOP3/来源标注/答主报告）/
-                     # 存储可插拔（未配 STUCK_REDIS_URL 内存兜底/读写回环/文章计数）/
+                     # 存储可插拔（未配 STUCK_REDIS_URL 内存兜底/读写回环/文章计数/Redis 不可达 5s 内降级不悬挂）/
                      # 首页三秒洞察（段号/占比/赞数）
 npm run test:hub     # 学习中心 23 项：buildHubGraph 节点/边方向/缺口判定/三色计数/
                      # 主题归类/诊断总结/薄弱主题 TOP3/建议补概念/空数据兜底
@@ -235,7 +235,7 @@ Base：`https://<你的云函数域名>`（当前开发环境地址写在 `demo/
 响应：`report` → `{ "ok": true, "count": N }`；`top` → `{ "items": [{ "concept": "…", "count": N, "paragraphIndex": 1 }] }`
 只传「概念名 + 段号」，**不含正文、链接与身份**；本地 dev server 的 `/api/stuck` 为同构镜像，供离线端到端验证。
 读回后与 `core/stuck.js` 的 seed 数据按「只叠加 `max(0, 社区数 − 本机数)`」去重，再如实标注来源（§一「数据来源如实标注」）。
-**存储可插拔（默认内存、可选持久化）**：默认把计数存在函数实例内存里（`STUCK_MAX_ARTICLES`/`STUCK_MAX_CONCEPTS` 有上限），冷启动或多实例下会归零/不一致；配置 `STUCK_REDIS_URL` 后改写 Redis —— 冷启动 / 多实例共享、跨设备互见，Redis 不可用自动降级回内存，接口契约与前端零改动（实现见 `scf/stuck-store.js`）。
+**存储可插拔（默认内存、可选持久化）**：默认把计数存在函数实例内存里（`STUCK_MAX_ARTICLES`/`STUCK_MAX_CONCEPTS` 有上限），冷启动或多实例下会归零/不一致；配置 `STUCK_REDIS_URL` 后改写 Redis —— 冷启动 / 多实例共享、跨设备互见，Redis 不可用（连接失败或 5 秒内连不上）即降级回内存、不重连不悬挂，接口契约与前端零改动（实现见 `scf/stuck-store.js`）。
 
 ### 错误约定
 | 场景 | 状态码 |
@@ -304,19 +304,22 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
    cd .. ; python scripts/fix-scf-zip.py   # 修反斜杠 + scf_bootstrap 可执行位
    ```
 2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）、`STUCK_REDIS_URL`（可选，卡点聚合持久化，不配则进程内存）；执行超时 **60 秒**
+   - `STUCK_REDIS_URL` 取值来源：腾讯云 Redis 控制台「实例详情 → 连接信息」抄 **内网地址(host) / 端口(port) / 密码**，拼成 `redis://:<密码>@<host>:<port>/0`（开启 SSL 的实例用 `rediss://`；密码含 `@` `:` `/` 等特殊字符需 URL 编码，如 `@`→`%40`）。函数与实例**须同地域**，优先走内网地址（VPC 内网）。
+   - 改环境变量后**无需重新打包上传**，保存即生效；验证口径：`POST /stuck {"action":"report"}` 上报 → 等函数冷启动/换实例 → `{"action":"top"}` 仍能读回计数。若函数日志出现 `[stuck-store] Redis 不可用，后续降级内存：…`，即连接信息有误（host/密码/网络不通）：此时按内存兜底照常服务（不报错、不卡请求），但跨实例共享失效，需回查连接串。
 3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections` → `POST /stuck`（`{"action":"report",…}` 再 `{"action":"top",…}` 应能读回计数）
-4. 改过 `scf/index.js` 后**必须重新打包上传**，否则线上仍是旧 prompt——`/ask` 的 `is_concept` 非概念拦截（问题清单 P0-2）依赖这一步才会生效
+4. 改过 `scf/index.js` / `scf/stuck-store.js` 后**必须重新打包上传**，否则线上仍是旧代码——`/ask` 的 `is_concept` 非概念拦截（问题清单 P0-2）、`/stuck` 的「Redis 不可达 5 秒内降级、不悬挂到函数超时」都依赖这一步才会生效
 
 ### 8.2 静态 Demo 站
 
 | 地址 | 说明 |
 |---|---|
-| <https://z.toply.top/zhiban-demo/> | **当前可用**：独立静态站的实际挂载路径（软链到同一份文件） |
-| <https://zhihu.toply.top/> | 独立域名站点，已建站并绑定域名，**待 DNS 解析到本机后启用** |
+| <https://z.toply.top/zhiban-demo/> | **当前可用**：独立静态站的实际挂载路径（软链到同一份文件），HTTPS 实测 200（含新版 `js/app/knowledge-source.js`） |
+| <https://zhihu.toply.top/> | 独立域名站点，已建站、绑定域名、DNS 已解析到本机；**HTTPS 已配置并实测 200**（首页 / SPA 深链回退 / `js/app/knowledge-source.js` 均 200），证书 Let's Encrypt 签发、2026-12-12 到期、不加 `-k` 亦校验通过；HTTP 仍可直连（有意不加强制跳转，避免影响 ACME HTTP-01 续期校验） |
 
 宝塔静态站：网站根目录 `/www/wwwroot/zhihu.toply.top`，上传 `demo/` 内容（保持相对路径）即可。
 伪静态需加 SPA 回退 `try_files $uri $uri/ /index.html;`（hash 路由本身不需要，但直接访问 `/creator` 这类路径时能进应用而非 404）。
-部署四约束：hash 路由 ✓、相对路径 ✓、函数超时 60s ✓、全链路 HTTPS + CORS ✓。
+部署四约束：hash 路由 ✓、相对路径 ✓、函数超时 60s ✓、HTTPS + CORS（`z.toply.top` 与 `zhihu.toply.top` 均全链路 HTTPS ✓；SCF 侧 `Access-Control-Allow-Origin: *`）+ CORS ✓。
+证书续期：宝塔每日 04:17 的「续签Let's Encrypt证书」任务（`acme_v2.py --renew_v2=1`）按站点证书 md5 匹配续签，成功后回写 `vhost/cert/zhihu.toply.top/` 并自动 reload nginx，无需人工干预。
 
 ### 8.3 Chrome 插件（克隆仓库后必做这三步）
 
