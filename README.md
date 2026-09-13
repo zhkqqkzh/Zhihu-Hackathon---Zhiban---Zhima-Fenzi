@@ -149,6 +149,7 @@ export ZHIHU_ACCESS_SECRET=xxx
 |---|---|---|
 | `ZHIPU_API_KEY` | SCF 函数配置 | 智谱 GLM 密钥（**必须**） |
 | `ZHIHU_ACCESS_SECRET` | SCF 函数配置 | 知乎站内搜索（不配则降级） |
+| `STUCK_REDIS_URL` | SCF 函数配置 | 卡点聚合持久化（`redis://...`；不配则进程内存，见 §五 `/stuck`） |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | 本地 dev server | 本地接真实模型（不配则 mock） |
 | `PORT` | 本地 | dev server 端口，默认 8787 |
 
@@ -294,7 +295,7 @@ localStorage 键前缀 `zb:`（插件为 `chrome.storage.local`，同结构）�
 线上地址：`https://1399201542-7y33vuteqi.ap-beijing.tencentscf.com`（与 `demo/js/app/api.js` 的 `SCF_BASE`、`extension/src/background.js` 保持一致）
 
 1. 函数配置 → 上传 `scf/zhiban-scf.zip`（zip 根目录必须含 `scf_bootstrap`/`index.js`/`package.json`/`node_modules`，正斜杠路径；重新打包脚本见 git 历史或按 `extension/build.mjs` 同款 Python zipfile 方式）
-2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）；执行超时 **60 秒**
+2. 环境变量：`ZHIPU_API_KEY`（必须）、`ZHIHU_ACCESS_SECRET`（可选）、`STUCK_REDIS_URL`（可选，卡点聚合持久化，不配则进程内存）；执行超时 **60 秒**
 3. 自测：`GET /ping` → `POST /ask`（含 `stream:true`）→ `POST /collections` → `POST /stuck`（`{"action":"report",…}` 再 `{"action":"top",…}` 应能读回计数）
 4. 改过 `scf/index.js` 后**必须重新打包上传**，否则线上仍是旧 prompt——`/ask` 的 `is_concept` 非概念拦截（问题清单 P0-2）依赖这一步才会生效
 
