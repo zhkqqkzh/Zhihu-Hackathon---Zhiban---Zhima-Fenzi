@@ -1,12 +1,12 @@
-// 语法校验：对项目内所有 .js/.mjs 执行 node --check（根 package.json type:module，
-// 因此 .js 按 ESM 解析）。用法：node scripts/check-syntax.mjs
+// 语法校验：对项目内所有 .js/.mjs 执行 node --check（模块类型按就近 package.json：
+// 根为 ESM，scf/ 为 CommonJS）。用法：node scripts/check-syntax.mjs
 import { execFileSync } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const SCAN_DIRS = ['demo', 'server', 'extension/src', 'scripts'];
+const SCAN_DIRS = ['demo', 'server', 'extension/src', 'scripts', 'scf'];
 const SKIP = ['node_modules', 'vendor', 'dist', '.git'];
 
 function walk(dir, out = []) {
