@@ -155,7 +155,7 @@ export ZHIHU_ACCESS_SECRET=xxx
 ## 四、测试与校验
 
 ```bash
-npm run check        # 全量 JS 语法（node --check）+ 模块导入解析（路径/具名/默认导出）；当前 62 文件 0 失败
+npm run check        # 全量 JS 语法（node --check）+ 模块导入解析（路径/具名/默认导出）；当前 63 文件 0 失败
 npm run test:core    # 核心算法 140 项：概念匹配/幽灵标记检测/扩句/依赖图/拓扑序/白名单过滤/
                      # 边加权/缺口Top1/聚类/策展排序/回访间隔/难度三档/停用词拦截/
                      # explain 结构漂移解包（answer 包装/平铺/非概念短路）/
@@ -165,9 +165,10 @@ npm run test:core    # 核心算法 140 项：概念匹配/幽灵标记检测/�
 npm run test:hub     # 学习中心 23 项：buildHubGraph 节点/边方向/缺口判定/三色计数/
                      # 主题归类/诊断总结/薄弱主题 TOP3/建议补概念/空数据兜底
 npm run test:api     # 后端 28 项：五接口结构/字段零缺失/400/限流429/CORS/目录穿越/卡点上报与聚合
-npm run test:e2e     # 端到端 52 项：Edge 无头 + CDP 真实划选→首页三秒洞察→浮层三层解释（含前置）→
+npm run test:e2e     # 端到端 56 项：Edge 无头 + CDP 真实划选→首页三秒洞察→浮层三层解释（含前置）→
                      # 浮层卡点 +1 与来源标注→选「的」不弹窗→侧栏本篇卡点 TOP3 跳段落高亮→
-                     # 答主视角页卡点报告与前置说明草稿→诚实的空状态→社区聚合读回→SCF 预热接入
+                     # 侧栏答主视角报告与补前置建议→答主视角页卡点报告与前置说明草稿→
+                     # 诚实的空状态→社区聚合读回→SCF 预热接入
 npm run build:ext    # 插件打包到 extension/dist
 ```
 

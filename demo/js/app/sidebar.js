@@ -7,7 +7,7 @@ import { shadowRoot, el, toast, assetUrl } from './ui.js';
 import { runtime, jumpToAnchor } from './runtime.js';
 import * as store from './store.js';
 import { api } from './api.js';
-import { mergeStuck, formatCount, stuckSourceLabel } from '../core/stuck.js';
+import { mergeStuck, formatCount, stuckSourceLabel, buildCreatorReport } from '../core/stuck.js';
 import { ensurePrescan, refreshHighlights } from './prescan.js';
 import { renderQuizTab } from './quiz.js';
 import { loadSample, confirmClear } from './sample.js';
@@ -107,13 +107,14 @@ export function openSidebar(tab = 'tail') {
     body.replaceChildren();
     if (name === 'tail') return renderTailTab(body, badge);
     if (name === 'stuck') return renderStuckTab(body);
+    if (name === 'creator') return renderCreatorTab(body);
     if (name === 'quiz') return renderQuizTab(body);
     if (name === 'review') return renderReviewTab(body);
     if (name === 'data') return renderDataTab(body);
     if (name === 'profile') return renderProfileTab(body);
   };
 
-  for (const [name, label] of [['tail', '我的短尾巴'], ['stuck', '本篇卡点'], ['quiz', '看山提问'], ['review', '每周复盘'], ['data', '数据控制']]) {
+  for (const [name, label] of [['tail', '我的短尾巴'], ['stuck', '本篇卡点'], ['creator', '答主视角'], ['quiz', '看山提问'], ['review', '每周复盘'], ['data', '数据控制']]) {
     const tabBtn = el('button', { class: 'zb-tab', dataset: { tab: name }, text: label });
     if (name === 'review' && hasUnseenReview()) tabBtn.appendChild(el('span', { class: 'dot' }));
     tabBtn.addEventListener('click', () => renderTab(name));
@@ -220,6 +221,48 @@ async function renderStuckTab(body) {
     item.addEventListener('click', () => jumpToAnchor({ ...s, text: s.concept }, page));
     body.appendChild(item);
   }
+}
+
+// 答主视角 tab（改造方案 §4.4）：作者在自己的回答里直接看到读者卡点报告，
+// 与 demo 站 #/creator 页同源（core/stuck.js buildCreatorReport），三源如实标注。
+// 点条目跳回原文对应段落，底部给「补前置说明」的具体建议——飞轮的答主那一端。
+async function renderCreatorTab(body) {
+  const page = runtime.page;
+  if (!page) {
+    body.appendChild(el('div', { text: '打开一篇回答后，这里会显示这篇的读者卡点报告。' }));
+    return;
+  }
+  const marks = await store.getStuckMarks(page.articleId);
+  // 与「本篇卡点」tab 同源：本地 + 演示 seed + 社区 /stuck 聚合，读不到就只显本地/演示。
+  const community = await api.getStuckAggregate({ articleId: page.articleId, topN: 10 })
+    .then((r) => r?.items || []).catch(() => []);
+  const report = buildCreatorReport(page.articleId, page.article, marks, 3, community);
+  if (!report.hasData) {
+    body.appendChild(el('div', { text: '这篇还没有读者卡点数据。读者划词时点一下「卡了一下」，这里会攒出报告。' }));
+    return;
+  }
+  const topShare = report.totalStuck ? Math.round((report.topStuck / report.totalStuck) * 100) : 0;
+  body.appendChild(el('div', { style: 'font-size:12px;color:#8590a6;margin-bottom:8px;line-height:1.7',
+    text: `读者在这篇卡了 ${formatCount(report.totalStuck)} 人次，前三处占 ${topShare}%。如果这是你的回答，把它们讲在前面。` }));
+  for (const s of report.items) {
+    const item = el('div', { class: 'zb-map-item', style: 'cursor:pointer;align-items:flex-start' }, [
+      el('span', { class: 'dot', style: 'margin-top:5px' }),
+      el('div', {}, [
+        el('div', { text: `${s.concept} · ${formatCount(s.count)} 人` }),
+        el('div', { style: 'font-size:11px;color:#8590a6;margin-top:2px',
+          text: `占本篇卡点 ${s.share}% · 第 ${(s.paragraphIndex ?? 0) + 1} 段 · ${stuckSourceLabel(s)}` }),
+      ]),
+    ]);
+    item.addEventListener('click', () => jumpToAnchor({ ...s, text: s.concept }, page));
+    body.appendChild(item);
+  }
+  const lead = report.items[0]?.concept || '';
+  const second = report.items[1]?.concept || '';
+  body.appendChild(el('div', { class: 'zb-rev-card', style: 'margin-top:10px' }, [
+    el('div', { style: 'font-size:13px;font-weight:600;margin-bottom:4px', text: '可以怎么补' }),
+    el('div', { style: 'font-size:12px;line-height:1.8;color:#444',
+      text: `在开头加一句前置说明，例如：「读之前先了解${lead}${second ? ` 和 ${second}` : ''}，下文会顺很多」。下一任读者在这里就卡不住了。` }),
+  ]));
 }
 
 // 复盘 tab（计划书第 3 条）：图谱/诊断的展开详情，数据全部来自本地概念记录，零接口依赖。

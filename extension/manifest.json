@@ -3,6 +3,11 @@
   "name": "知伴 · 和看山一起读",
   "version": "0.1.0",
   "description": "读知乎遇到不懂的概念，划一下，当场在这篇回答的语境里讲明白。",
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
   "permissions": ["storage"],
   "host_permissions": [
     "https://www.zhihu.com/*",

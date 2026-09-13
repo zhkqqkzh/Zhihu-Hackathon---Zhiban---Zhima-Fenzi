@@ -158,6 +158,24 @@ const CLICK_FIRST_STUCK = `(() => {
   return null;
 })()`;
 
+// 侧栏「答主视角」tab（改造方案 §4.4）：切 tab / 读报告正文（含条目与建议卡）。
+const CLICK_CREATOR_TAB = `(() => {
+  const root = document.getElementById('zb-sidebar-root');
+  for (const host of root.querySelectorAll('*')) {
+    const tab = [...(host.shadowRoot?.querySelectorAll?.('.zb-tab') || [])].find((b) => b.textContent.includes('答主视角'));
+    if (tab) { tab.click(); return 'clicked'; }
+  }
+  return null;
+})()`;
+const CREATOR_TAB_TEXT = `(() => {
+  const root = document.getElementById('zb-sidebar-root');
+  for (const host of root.querySelectorAll('*')) {
+    const b = host.shadowRoot?.querySelector?.('.zb-body');
+    if (b && b.textContent.trim()) return b.textContent;
+  }
+  return null;
+})()`;
+
 try {
   await waitCdp();
   // 新开标签页（该 Edge 版本 json/new 忽略 url 参数，改用 CDP Page.navigate）
@@ -274,6 +292,16 @@ try {
   ok(await evaluate(CLICK_FIRST_STUCK) === 'clicked', '点击卡点条目');
   await sleep(900);
   ok((await evaluate(`CSS.highlights.has('zhiban-jump')`)) === true, '点击卡点跳回原文段落并高亮该词（§4.3）');
+
+  // 6.25 侧栏「答主视角」（§4.4）：读者卡点报告与 #/creator 同源，三源标注 + 补前置建议
+  ok(await evaluate(CLICK_CREATOR_TAB) === 'clicked', '侧栏切入「答主视角」tab');
+  const creatorReport = await poll(`(${CREATOR_TAB_TEXT})?.includes('人次') ? (${CREATOR_TAB_TEXT}) : null`);
+  ok(!!creatorReport && creatorReport.includes('链式法则') && creatorReport.includes('1,283'),
+    '答主视角报告 TOP1 = 链式法则 1,283 人（§4.4）');
+  ok(!!creatorReport && creatorReport.includes('演示环境数据'),
+    '答主视角来源如实标注「演示环境数据」');
+  ok(!!creatorReport && creatorReport.includes('可以怎么补') && creatorReport.includes('前置说明'),
+    '答主视角给出补前置说明建议（飞轮答主端）');
 
   // 6.1 入口按钮：侧栏展开时隐藏，关闭后恢复
   ok((await evaluate(`document.querySelector('#zb-entry > *')?.style.display`)) === 'none',
