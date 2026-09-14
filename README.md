@@ -23,8 +23,6 @@
 - **为什么在这篇里重要**（紧扣上下文，不泛泛而谈）
 - **前置概念链**（如「损失函数 → 梯度下降」，告诉你读之前需要先了解什么）
 
-与官方直答的区别：知伴用自建 GLM 模型 + 自定义 prompt，做到「概念+本段语境」的精准解释，支持流式逐字渲染，且每天调用次数不受官方额度限制。
-
 ### 2. 你卡住的地方，也让别人少卡一次（卡点飞轮）
 
 这是知伴最独特的价值——把每个读者「卡住」的瞬间量化、聚合、回馈社区：
@@ -36,8 +34,6 @@
 ```
 
 数据三源在界面**如实标注**：演示环境数据 / 你的上报 / 社区上报，绝不把预置数据冒充真实统计。
-
-读回时用 `max(0, 社区数 − 本机数)` 去重，同一人不重复计入。
 
 ### 3. 全文预扫描——读之前就知道哪里会卡
 
@@ -73,8 +69,6 @@
 - 具体帮你补上哪些概念
 - 点击即可跳转文章页
 
-推荐体系与个人中心首页的「为你挑出 N 条」计数对齐。
-
 ### 8. 个人中心完整闭环
 
 独立页面（`#/profile`），包含：
@@ -90,44 +84,22 @@
 
 ---
 
-## 架构概览
+## 架构
 
 ```
-┌─────────────┐   fetch/messaging   ┌──────────────────┐   HTTPS   ┌──────────────┐
-│ 交付形态     │ ──────────────────→ │  腾讯云 SCF       │ ────────→ │ 智谱 GLM      │
-│ Chrome 插件  │                     │  /ping /ask      │           │glm-4.7-flashx│
-└─────────────┘                     │  /prescan /search│ ────────→ ├──────────────┤
-        所有用户数据只存浏览器本地     │  /quiz           │           │ 知乎开放平台  │
-                                    │  /collections    │           └──────────────┘
-                                    └──────────────────┘
+知乎页面（插件注入）──→ 腾讯云 SCF（模型调用/代理）──→ 智谱 GLM
+                   所有用户数据只存浏览器本地
 ```
 
 **关键设计原则**：
-- **没有数据库、没有自有服务器**。模型密钥与知乎密钥只在 SCF 环境变量里。
-- **知乎接口只是可选增强，不是核心依赖**：/search（前置跳转）、/collections（收藏体检）在未配置密钥、或无扩展注入、或调用失败时**一律静默降级**；P0 选中即问与 P1 全文标记仅需页面文本 + LLM，完全不依赖知乎接口。
-- `/ask` 支持 `stream:true`：SCF 把 GLM 的 SSE 增量原样透传，前端边收边渲染（含 `reasoning_content` 思考链处理）。
-- **存储可插拔**：卡点聚合默认内存、配 `STUCK_REDIS_URL` 即 Redis 持久化，冷启动 / 多实例共享、跨设备互见。Redis 不可用自动降级回内存，不悬挂到函数超时。
-- **环境差异只出现在适配层**：共享模块（`demo/js/core/`）不得出现 `localStorage`/`chrome.*`/`fetch` 直连业务域名。
+- **没有数据库、没有自有服务器**。模型密钥只在 SCF 环境变量里。
+- **知乎接口只是可选增强，不是核心依赖**：在未配置密钥或无扩展注入时一律静默降级；核心选中即问与全文标记仅需页面文本 + LLM。
+- `/ask` 支持 `stream:true`：SCF 把 GLM 的 SSE 增量原样透传，前端边收边渲染。
 
 ### 目录结构
 
 ```
-├── demo/                  # 前端代码（hash 路由、相对路径）
-│   ├── index.html
-│   ├── assets/            # 样式 + 刘看山素材（本地自托管）
-│   └── js/
-│       ├── core/          # ★ 环境无关共享模块（全部关键算法，纯函数可单测）
-│       │                  #   match / textnodes / highlight / context / graph / srs / difficulty / stopwords / quote / selectors / storage / note / review / stuck
-│       ├── app/           # 应用层：main/router/selection/popup/sidebar/prescan/guide/quiz/...
-│       │                  #   home/creator/hub/igloo/profile/api/store/ui/runtime/sample
-│       └── data/          # 3 篇互链 ML 文章
-├── server/                # 本地 dev server：静态托管 + 四接口 + mock 模型
-├── scf/                   # ★ 生产后端：腾讯云 SCF Web 函数
-│   ├── index.js           #   /ping /ask /prescan /search /quiz /collections /stuck
-│   ├── stuck-store.js     #   卡点聚合存储适配层（默认内存 / 配 STUCK_REDIS_URL 走 Redis）
-│   ├── scf_bootstrap      #   自定义运行时启动脚本
-│   └── package.json
-├── extension/             # Chrome MV3 插件
+├── extension/             # Chrome MV3 插件（核心交付）
 │   ├── manifest.json
 │   ├── src/
 │   │   ├── content.js         # 知乎适配层（CSP 绕行、划词、SPA 归属判定）
@@ -137,7 +109,16 @@
 │   ├── profile.html
 │   ├── build.mjs          # esbuild 打包
 │   └── dist/              # 构建产物（git 忽略，npm run build:ext 生成）
-├── scripts/               # 校验与测试
+├── demo/                  # 插件能力镜像的前端代码（本地开发使用）
+│   ├── index.html
+│   ├── assets/
+│   └── js/
+│       ├── core/          # 环境无关共享模块（匹配/高亮/诊断/存储/笔记等）
+│       ├── app/           # 应用层（路由/选中/浮层/侧栏/个人中心等）
+│       └── data/          # 3 篇互链 ML 文章
+├── server/                # 本地开发服务器
+├── scf/                   # 腾讯云 SCF 后端代码
+├── scripts/               # 脚本与测试
 └── package.json
 ```
 
@@ -150,7 +131,6 @@
 | 语法+模块检查 | 67 文件 0 失败 |
 | 核心算法单测 | 162 项 0 失败 |
 | 学习中心 | 23 项 0 失败 |
-| 后端接口 | 28 项 0 失败 |
 | 端到端（Edge 无头 + CDP 真实划选） | 73 项 0 失败 |
 
 ---
@@ -158,15 +138,11 @@
 ## 快速开始
 
 ```bash
-npm install          # 仅开发依赖（esbuild/express）
-npm run dev          # http://localhost:8787
-
-# 本地接真实模型（可选）
-export LLM_API_KEY=xxx LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4 LLM_MODEL=glm-4.5-flash
-
-# 插件构建
-npm run build:ext    # 打包到 extension/dist
+npm install          # 安装构建依赖（esbuild）
+npm run build:ext    # 打包插件到 extension/dist
 ```
+
+构建完成后，打开 `chrome://extensions` → 开启开发者模式 → 加载已解压的扩展程序 → 选中 `extension/` 目录。
 
 完整部署指南见 [DEPLOY.md](./DEPLOY.md)。
 
@@ -175,9 +151,7 @@ npm run build:ext    # 打包到 extension/dist
 ## 已知限制
 
 - **移动端不做**：知乎的阅读主场景在手机，而移动端无法承载 MV3 扩展与划选交互，这是形态天花板
-- **知乎接口为可选增强**：/search、/collections 在无扩展注入或调用失败时静默降级，P0/P1 功能不受影响
 - **收藏夹体检依赖插件环境**：需读知乎登录态
-- **卡点聚合默认内存**：未配 `STUCK_REDIS_URL` 时冷启动或多实例下会归零；界面因此始终如实标注数据来源
 
 ---
 
