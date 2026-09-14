@@ -1,6 +1,9 @@
 node_modules/
 extension/dist/
 scf/node_modules/
+scf/dist/
+scf/build/
+site/
 *.zip
 相关资料/
 .DS_Store

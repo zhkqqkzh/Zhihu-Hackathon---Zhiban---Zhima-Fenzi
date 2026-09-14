@@ -1,4 +1,0 @@
-#!/bin/bash
-# SCF Web function bootstrap: platform expects port 9000
-cd $(dirname $0)
-node index.js
