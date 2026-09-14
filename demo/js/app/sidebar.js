@@ -163,13 +163,22 @@ export function isSidebarOpen() { return open; }
 async function renderTailTab(body, badge) {
   const page = runtime.page;
   if (!page) {
-    body.appendChild(el('div', { text: '打开一篇回答后，这里会显示这篇的概念地图。' }));
+    body.appendChild(el('div', { text: '打开一篇回答后，这里会展示这篇的核心概念。' }));
     return;
   }
-  const concepts = await ensurePrescan(page.articleId);
+  // 加速响应：先看本地有没有展开过的概念，没有就直接引导划词。
   const art = await store.getArticleRecord(page.articleId);
   const expanded = new Set(art?.expandedConcepts || []);
   badge.textContent = `本篇 ${expanded.size}`;
+  if (expanded.size === 0) {
+    body.appendChild(el('div', {
+      style: 'font-size:13px;line-height:1.7;color:#8590a6;padding:12px 0',
+      text: '请进行划词解释后查看。',
+    }));
+    return;
+  }
+  // 有展开记录才走预扫描和词表渲染
+  const concepts = await ensurePrescan(page.articleId);
   if (!concepts?.length) {
     body.appendChild(el('div', { text: '这篇的概念词表还没扫出来。选中一个词试试，我会顺便把整篇扫一遍。' }));
     return;

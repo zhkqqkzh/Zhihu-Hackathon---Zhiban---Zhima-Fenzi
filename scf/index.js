@@ -79,21 +79,24 @@ var NON_CONCEPT_MARKERS = [
   '什么', '怎么', '为什么', '前者', '后者', '之类', '等等', '我们', '你们', '他们',
 ];
 
-// 选中内容里的句读标点：说明划进来的是一个句子片段，不是一个概念。
-var SENTENCE_PUNCTUATION = /[，。！？；：、""''「」（）【】《》〈〉…—～·,.;:!?"'`()\[\]{}<>]/;
+// 只认句末 / 分句标点：命中说明划进来的是一个句子片段，不是一个概念。
+// 括号、顿号、小数点、连字符在真术语里很常见（「梯度下降（Gradient Descent）」「f(x)」
+// 「TensorFlow 2.0」），一律不拦——曾按「任意标点即拒」实现，把这类词全挡在门外了。
+var SENTENCE_ENDERS = /[。！？；…]/;
 
 function isNonConceptTerm(term) {
   var t = String(term || '').trim();
   if (!t) return true;
   if (NON_CONCEPT_TERMS.indexOf(t.toLowerCase()) >= 0) return true;
   if (!/[\p{L}\p{N}]/u.test(t)) return true; // 纯标点 / 纯符号 / 纯表情
-  if (SENTENCE_PUNCTUATION.test(t)) return true;
-  if (t.length > 40) return true; // 40 字以上不可能是待解释的概念
+  if (SENTENCE_ENDERS.test(t)) return true;
+  if (t.length > 60) return true; // 60 字以上是一段话，不是待解释的概念（与前端阈值一致）
   // 指示代词开头（「这个模型」这种）：真实术语不会以这/那/它起头。
   if (/^(这|那|它)/.test(t)) return true;
   // 人称代词开头要带「们/的/觉得…」这类后续字才算虚指——否则会误杀「他汀类药物」这种真术语。
   if (/^(我|你|他|她)(们|的|觉得|认为|想|说|看|来|去)/.test(t)) return true;
-  if (/(的|了|吗|呢|吧|啊|嘛|哦|呀)$/.test(t)) return true; // 助词 / 语气词收尾
+  // 助词 / 语气词收尾。两字词除外：否则误杀「目的」「为了」这种真词。
+  if (t.length > 2 && /(的|了|吗|呢|吧|啊|嘛|哦|呀)$/.test(t)) return true;
   var i;
   for (i = 0; i < NON_CONCEPT_MARKERS.length; i++) {
     if (t.indexOf(NON_CONCEPT_MARKERS[i]) >= 0) return true;
@@ -104,15 +107,23 @@ function isNonConceptTerm(term) {
 // ---- Prompt 模板（/ask 用）----
 // 判定必须前置：实测把「若选中内容不是概念则返回 is_concept:false」写在 JSON 示例之后时，
 // 模型会当耳旁风，还把字段说明抄进正文。所以改成「第一件事判定 → 第二件事解释」，并给反例。
+// 拒绝口径收得很窄：只拒「完全没有可解释含义」的字。专有名词（人名、机构名、产品名）与
+// 「有点陌生的普通词」都要解释——曾把它们列进拒绝类别，用户划词后频繁收到「不是概念」。
 function buildPrompt(term, context) {
-  return '判断用户选中的内容是不是一个「需要解释的概念」，再决定怎么回答。\n' +
+  return '判断用户选中的内容是不是一个「值得解释的概念」，再决定怎么回答。\n' +
     '\n' +
     '【第一件事：判定】\n' +
-    '选中内容若不是专业术语或学科概念——虚词、代词、指示词、连接词、过渡语、标点符号、' +
-    '人名机构名等专有名词、日常口语片段——直接输出 {"is_concept":false}，不要解释它。\n' +
+    '只有当选中内容完全没有可解释含义时，才直接输出 {"is_concept":false}：' +
+    '纯功能词（虚词、代词、指示词、连接词、语气词）、标点符号，' +
+    '或「他说的那样」这类没头没尾的口语残句。\n' +
     '例：选中「它」→ {"is_concept":false}\n' +
     '例：选中「换句话讲」→ {"is_concept":false}\n' +
     '例：选中「上面的说法」→ {"is_concept":false}\n' +
+    '除此之外一律输出 true 并给出解释：术语、学科概念、专有名词（人名、机构名、产品名、' +
+    '方法名、地名）、缩写、行业说法、俗语，乃至只是有点陌生的普通词，都要解释。' +
+    '特别注意：带横杠/连字符的模型名版本号（如「MoziAI-35B-V3.7」「GPT-4o」「ResNet-50」）' +
+    '也是明确的专有名词，应当解释。' +
+    '拿不准时按 true 处理——多解释一句没有坏处，拒绝对用户才是卡住。\n' +
     '\n' +
     '【第二件事：是概念时】只输出一行 JSON，不要 markdown 代码块，不要任何多余文字：\n' +
     '{"is_concept":true,"definition":"...","context_why":"...","prerequisites":["..."]}\n' +
@@ -568,3 +579,5 @@ if (require.main === module) {
 }
 
 module.exports = app;
+// 供本地排查「这个词为什么被拒」用：node -e "console.log(require('./index.js').isNonConceptTerm('目的'))"
+module.exports.isNonConceptTerm = isNonConceptTerm;

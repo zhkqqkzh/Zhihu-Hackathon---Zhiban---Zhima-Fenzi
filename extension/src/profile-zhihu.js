@@ -5,7 +5,7 @@
 // 体检口径（§方案）：先规则打分（本地、瞬时），再只把打分结果交给大模型做聚类与点评——
 // 规则负责"分"，模型负责"说人话"，模型挂了也还有分可看。
 
-import { el, toast } from '../../demo/js/app/ui.js';
+import { el, icon, toast } from '../../demo/js/app/ui.js';
 import { api } from '../../demo/js/app/api.js';
 
 const COLLECTION_LIMIT = 20; // 单次体检篇数（接口分页 limit）
@@ -112,9 +112,9 @@ const LEVEL_TEXT = { high: '值得精读', mid: '可以一读', low: '可略过'
 // ---------- 渲染 ----------
 
 // 区块外壳：h2 常驻，body 由各渲染函数整体替换（避免互相清掉对方的内容）
-function section(title) {
+function section(iconName, title) {
   const sec = el('div', { class: 'hub-section' });
-  sec.appendChild(el('h2', { text: title }));
+  sec.appendChild(el('h2', {}, [icon(iconName), el('span', { text: title })]));
   const body = el('div');
   sec.appendChild(body);
   return { sec, body };
@@ -162,7 +162,7 @@ function renderChips(collections, currentId, onPick) {
 }
 
 // 收藏夹思维导图：纯 DOM/CSS 树（MV3 CSP 禁远程脚本，用不了图谱库）
-function renderTree(body, collectionName, groups, total) {
+function renderTree(body, collectionName, groups, total, hint) {
   const leaf = (it) => el('li', {}, [
     el('div', { class: 'zb-tree-label' }, [
       link(it.title, it.url, 'zb-tree-link'),
@@ -190,7 +190,7 @@ function renderTree(body, collectionName, groups, total) {
   rootLi.appendChild(el('ul', { class: 'zb-tree-children' }, groups.map(groupNode)));
 
   body.replaceChildren(
-    el('div', { class: 'hint', text: '由大模型按主题聚类；点击标题可跳原文。' }),
+    el('div', { class: 'hint', text: hint || '由大模型按主题聚类；点击标题可跳原文。' }),
     el('ul', { class: 'zb-tree' }, [rootLi]),
   );
 }
@@ -218,9 +218,9 @@ function renderCheckup(body, items, reviews, chips, hint) {
 
 // onItems：体检结果回调，把当前收藏夹的打分文章交给调用方（个人中心「推荐阅读」模块用）。
 export async function renderZhihuHub(host, onItems) {
-  const acc = section('👤 知乎账号');
-  const chk = section('🩺 收藏夹体检');
-  const tre = section('🗺️ 收藏夹思维导图');
+  const acc = section('user', '知乎账号');
+  const chk = section('activity', '收藏夹体检');
+  const tre = section('tree', '收藏夹思维导图');
   host.replaceChildren(acc.sec, chk.sec, tre.sec);
   acc.body.textContent = '正在读取知乎登录态…';
 
@@ -250,7 +250,7 @@ export async function renderZhihuHub(host, onItems) {
       const name = String(c.title || '我的收藏夹');
       const chips = renderChips(cols.list, c.id, openCollection);
       chk.body.replaceChildren(chips, el('div', { class: 'hint', text: `正在读取「${name}」…` }));
-      tre.body.replaceChildren(el('div', { class: 'hub-empty', text: '正在生成分类…' }));
+      tre.body.replaceChildren(el('div', { class: 'hub-empty', text: '正在读取收藏夹…' }));
 
       const res = await fetchItems(c.id);
       if (res.error) {
@@ -269,6 +269,13 @@ export async function renderZhihuHub(host, onItems) {
 
       const hint = el('div', { class: 'hint', text: `规则打分排序，看山为前 6 篇补充点评；本次体检最近 ${items.length} 篇。` });
       renderCheckup(chk.body, items, [], chips, hint);
+
+      // 提前加载：规则分已经在手上，立刻按「可读性」三档画出思维导图，不等大模型。
+      // 大模型的主题聚类回来后再整棵树替换（下面 renderTree 那一处）。
+      const byLevel = ['high', 'mid', 'low']
+        .map((lv) => ({ name: LEVEL_TEXT[lv], items: items.filter((it) => it.level === lv) }))
+        .filter((g) => g.items.length);
+      renderTree(tre.body, name, byLevel, items.length, '规则分组（看山正在按主题聚类，好了会自动替换）');
 
       const r = await api.analyzeCollections({
         items: items.map((it) => ({ title: it.title, excerpt: it.excerpt.slice(0, 120), score: it.score })),

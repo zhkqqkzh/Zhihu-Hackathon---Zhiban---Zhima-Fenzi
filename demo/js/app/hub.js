@@ -5,7 +5,7 @@
 //   区块3 最近学习时间轴（最近 20 次学习卡片，点击回原文锚点并高亮）
 // 数据全部来自本地 store（IndexedDB/localStorage 适配层），不上传服务器。
 
-import { el } from './ui.js';
+import { el, icon } from './ui.js';
 import * as store from './store.js';
 import { navigate } from './router.js';
 import { requestAnchorJump } from './runtime.js';
@@ -79,7 +79,7 @@ export function renderGraphSection(concepts, root, onRefresh) {
   const sec = el('div', { class: 'hub-section' }, [
     el('div', { style: 'display:flex;align-items:baseline;justify-content:space-between' }, [
       el('div', {}, [
-        el('h2', { text: '🧠 思维导图' }),
+        el('h2', {}, [icon('tree'), el('span', { text: '思维导图' })]),
         el('div', { class: 'hint', text: '你学过的概念与它们之间的依赖。红色是「缺口」——某概念需要它，但你还没学过。' }),
       ]),
       el('button', { class: 'hub-refresh', text: '刷新', onclick: () => (onRefresh || renderHub)(root) }),
@@ -261,7 +261,7 @@ function renderGraphFallback(g, box, concepts) {
 // ============ 区块2：诊断报告 ============
 async function renderDiagnosisSection(concepts, root) {
   const sec = el('div', { class: 'hub-section' }, [
-    el('h2', { text: '📋 诊断报告' }),
+    el('h2', {}, [icon('report'), el('span', { text: '诊断报告' })]),
     el('div', { class: 'hint', text: '纯前端规则统计，不消耗模型额度。把统计喂给大模型润色是可选项，失败会自动降级为规则文案。' }),
   ]);
   root.appendChild(sec);
@@ -284,7 +284,7 @@ async function renderDiagnosisSection(concepts, root) {
   const grid = el('div', { class: 'diag-grid' }, []);
   // 薄弱主题 TOP3
   const weakCol = el('div', { class: 'diag-col', style: 'grid-column: span 2' }, [
-    el('h3', { text: '📉 主题掌握度（薄弱主题已标橙）' }),
+    el('h3', {}, [icon('trend'), el('span', { text: '主题掌握度（薄弱主题已标橙）' })]),
     el('div', {}, diag.topicList.map((t) => {
       const pct = Math.round(t.ratio * 100);
       const weak = t.ratio < 0.5;
@@ -297,11 +297,11 @@ async function renderDiagnosisSection(concepts, root) {
   ]);
   // 建议补 TOP3（缺口）
   const sugCol = el('div', { class: 'diag-col' }, [
-    el('h3', { text: '🎯 建议优先补' }),
+    el('h3', {}, [icon('target'), el('span', { text: '建议优先补' })]),
     diag.suggestedGaps.length
       ? el('div', {}, diag.suggestedGaps.map((x) => el('span', { class: 'diag-chip', text: x })))
-      : el('div', { class: 'hint', style: 'margin:0', text: '没有明显缺口，学得很扎实 👍' }),
-    el('h3', { text: '📍 薄弱主题', style: 'margin-top:14px' }),
+      : el('div', { class: 'hint', style: 'margin:0', text: '没有明显缺口，学得很扎实。' }),
+    el('h3', { style: 'margin-top:14px' }, [icon('pin'), el('span', { text: '薄弱主题' })]),
     diag.weakTopics.length
       ? el('div', {}, diag.weakTopics.map((x) => el('span', { class: 'diag-chip', text: x.name })))
       : el('div', { class: 'hint', style: 'margin:0', text: '无薄弱主题，继续保持' }),
@@ -327,7 +327,7 @@ async function tryPolishSummary(diag, box) {
 // ============ 区块3：最近学习时间轴 ============
 export function renderTimelineSection(concepts, root) {
   const sec = el('div', { class: 'hub-section' }, [
-    el('h2', { text: '🕐 最近学习' }),
+    el('h2', {}, [icon('clock'), el('span', { text: '最近学习' })]),
     el('div', { class: 'hint', text: '按学习时间倒序，最近 20 条。点击卡片回到原文位置。' }),
   ]);
   root.appendChild(sec);
@@ -379,7 +379,7 @@ export async function renderHub(app) {
   const wrap = el('div', { class: 'hub-layout' }, []);
   // Hero
   wrap.appendChild(el('div', { class: 'hub-hero' }, [
-    el('h1', { text: '🧭 学习中心' }),
+    el('h1', {}, [icon('compass'), el('span', { text: '学习中心' })]),
     el('div', { class: 'sub', text: '把读过的概念积累成图谱 —— 学习总结 + 缺口诊断。数据只存本浏览器。' }),
   ]));
   // 区块1 图谱

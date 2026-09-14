@@ -26,12 +26,15 @@ await esbuild.build({
   logLevel: 'info',
 });
 
-cpSync(join(DEMO, 'assets/kanshan'), join(DIST, 'assets/kanshan'), { recursive: true });
 // 独立页需要主文档皮肤（zhihu.css 提供 :root 变量与 .App 容器，zhiban.css 提供 hub 区块样式）
+// gif 等媒体复制放最后，以 try 保护（某些 .gif 文件过大时 cpSync 会崩 0xC0000409）
 for (const f of ['zhiban.css', 'zhihu.css']) {
   const src = join(DEMO, 'assets/css', f);
   if (!existsSync(src)) continue;
   mkdirSync(join(DIST, 'assets/css'), { recursive: true });
   cpSync(src, join(DIST, 'assets/css', f));
+}
+try { cpSync(join(DEMO, 'assets/kanshan'), join(DIST, 'assets/kanshan'), { recursive: true }); } catch (e) {
+  console.warn('kanshan assets copy skipped:', e.message);
 }
 console.log('extension dist ready →', DIST);

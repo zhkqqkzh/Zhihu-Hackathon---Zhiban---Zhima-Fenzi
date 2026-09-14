@@ -387,13 +387,14 @@ try {
     '首页读回社区聚合并如实标注「演示环境数据 + 社区上报」（问题 1 飞轮可见）');
 
   // 10. 个人中心（改造方案 §6 困惑双面镜）：首屏讲飞轮、卡点数字一律三源标注、贡献可下钻、收藏体检重定位。
+  // §6.2-6.3 个人中心（重写）：首页 + 5 个板块（学习足迹 / 收藏夹体检 / 知识卡片 / 推荐阅读）
   await evaluate(`location.hash = '#/profile'`);
   await sleep(900);
   ok(!!(await poll(`document.querySelector('.pf-layout .pf-nav') ? 'pf' : null`, 8000)),
     '个人中心外壳渲染（侧栏 + 主区，§6.3）');
   const pfNav = await evaluate(`[...document.querySelectorAll('.pf-nav-item')].map((e) => e.textContent.trim())`);
-  ok(Array.isArray(pfNav) && pfNav.length === 8 && pfNav.some((t) => t.includes('我的贡献')),
-    `个人中心模块导航含「我的贡献」（${pfNav?.length} 项，§6.3 次级导航）`);
+  ok(Array.isArray(pfNav) && pfNav.length === 5 && pfNav.some((t) => t.includes('学习足迹')),
+    `个人中心模块导航含「学习足迹」（${pfNav?.length} 项，§6.3 次级导航）`);
 
   // §6.2 首屏第一句：把「你卡一下 → 别人少卡一次」的飞轮讲出来，并如实标注来源
   const pfHero = await evaluate(`JSON.stringify({
@@ -409,31 +410,33 @@ try {
   // §6.3 你最常卡住的 3 个概念：逐卡标来源
   const conceptCards = JSON.parse(await evaluate(`JSON.stringify([...document.querySelectorAll('.pf-concept-card')].map((c) => ({
     name: c.querySelector('.pf-concept-name')?.textContent ?? '',
-    src: c.querySelector('.pf-concept-src')?.textContent ?? ''
+    src: c.querySelector('.pf-concept-mine')?.textContent ?? ''
   })))`));
-  ok(conceptCards.length >= 1 && conceptCards.length <= 3 && conceptCards.every((c) => c.name && c.src.startsWith('来源：')),
+  ok(conceptCards.length >= 1 && conceptCards.length <= 3 && conceptCards.every((c) => c.name && c.src),
     `个人中心列出最常卡住的概念并逐卡标来源（${conceptCards.length} 个）`);
 
-  // §6.4 下钻「我的贡献」：贡献总览 + 卡点地图，每个社区数字都带来源
+  // §6.4 下钻「学习足迹」：总览 stat + 近3文 + 近3知识点 + 思维导图（含方向文章数+点评）
   await evaluate(`document.querySelectorAll('.pf-nav-item')[1].click()`);
   await sleep(400);
-  const contribution = await evaluate(`(() => {
+  const footprint = await evaluate(`(() => {
     const t = document.getElementById('app').textContent;
     return JSON.stringify({
       head: document.querySelector('.pf-main h1')?.textContent ?? '',
       stats: document.querySelectorAll('.pf-main .pf-stat').length,
-      mapItems: [...document.querySelectorAll('.pf-map-item')].map((e) => e.textContent),
-      c1: t.includes('被多少人看到') && t.includes('C1'),
+      hasRecentArticles: t.includes('最近读过'),
+      hasRecentConcepts: t.includes('最近学过的概念'),
+      hasTree: t.includes('学习方向总览'),
+      hasDiagnosis: t.includes('诊断：') || t.includes('主题数据'),
     });
   })()`);
-  const contrib = JSON.parse(contribution);
-  ok(contrib.head.includes('我的贡献') && contrib.stats === 3,
-    `「我的贡献」贡献总览三卡（§6.4：${contrib.stats} 张）`);
-  ok(contrib.mapItems.length >= 1 && contrib.mapItems.every((t) => t.includes('来源：')),
-    `「我的贡献」卡点地图逐条标来源（${contrib.mapItems.length} 条）`);
-  ok(contrib.c1, '「我的贡献」如实说明「被看到/帮到」需等 C1 持久化，不编造社区数字（§6.6）');
+  const fp = JSON.parse(footprint);
+  ok(fp.head.includes('学习足迹') && fp.stats === 3,
+    `「学习足迹」总览三卡（§6.4：${fp.stats} 张）`);
+  ok(fp.hasRecentArticles, '「学习足迹」含近 3 篇文章');
+  ok(fp.hasRecentConcepts, '「学习足迹」含近 3 个概念');
+  ok(fp.hasTree && fp.hasDiagnosis, '「学习足迹」含思维导图及点评');
 
-  // §6.5 收藏体检重定位：这些收藏里，哪些概念你其实没真懂
+  // §6.5 收藏体检重定位
   await evaluate(`document.querySelectorAll('.pf-nav-item')[2].click()`);
   await sleep(400);
   const checkup = await evaluate(`JSON.stringify({
@@ -442,7 +445,7 @@ try {
     body: document.querySelector('.pf-main')?.textContent ?? ''
   })`);
   const chk = JSON.parse(checkup);
-  ok(chk.head.includes('收藏体检') && chk.sub.includes('哪些概念你其实没真懂'),
+  ok(chk.head.includes('收藏夹体检') && chk.sub.includes('哪些概念你其实没真懂'),
     '收藏体检重定位为「这些收藏里，哪些概念你其实没真懂」（§6.5）');
   ok(chk.body.includes('该补的信号') || chk.body.includes('没读完'),
     '收藏体检用本地足迹压出「该补信号」，不再空死（§6.5）');

@@ -118,26 +118,109 @@
 .hub-refresh:hover { border-color: #056de8; color: #056de8; }
 
 /* ============ 个人中心 · 侧边栏与模块 ============ */
-.pf-layout { display: flex; align-items: flex-start; gap: 16px; }
-.pf-nav { flex: none; width: 148px; background: #fff; border-radius: 6px; padding: 8px; position: sticky; top: 16px; }
+/* 去卡片化：内容直接落在页面底色上，用细分隔线分组（企业级后台的简洁排版），不再套一层层白底方块。 */
+.pf-layout { display: flex; align-items: flex-start; gap: 0; }
+.pf-nav {
+  flex: none; width: 152px; padding: 2px 14px 2px 0;
+  border-right: 1px solid var(--zb-border); position: sticky; top: 16px;
+}
 .pf-nav-item {
-  display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 6px;
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px;
   font-size: 14px; color: #444; cursor: pointer; user-select: none;
 }
-.pf-nav-item:hover { background: #f4f6f9; }
+.pf-nav-item:hover { background: #eceff4; }
 .pf-nav-item.active { background: #eaf2fe; color: #056de8; font-weight: 600; }
-.pf-nav-icon { font-size: 15px; }
-.pf-main { flex: 1; min-width: 0; }
-.pf-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.pf-main { flex: 1; min-width: 0; padding-left: 24px; }
+.pf-main.hub-layout { gap: 0; }
+.pf-main .hub-hero { padding: 0 0 18px; border-bottom: 1px solid var(--zb-border); }
+.pf-main .hub-hero .sub { margin-bottom: 0; }
+.pf-main .hub-section { padding: 20px 0; border-bottom: 1px solid var(--zb-border); }
+.pf-main .hub-section:last-child { border-bottom: 0; padding-bottom: 4px; }
+
+/* 内联 SVG 线性图标：尺寸走 --zb-icon-size，颜色跟随 currentColor（便于 hover / 选中态变色）。
+   跟在标题文字前时用 inline-flex + vertical-align 对齐，不套 flex 容器，避免影响标题换行。 */
+.pf-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; vertical-align: -3px; }
+.pf-icon svg { width: var(--zb-icon-size, 16px); height: var(--zb-icon-size, 16px); display: block; }
+.hub-hero h1 .pf-icon { --zb-icon-size: 20px; margin-right: 8px; }
+.hub-section h2 .pf-icon { --zb-icon-size: 18px; margin-right: 6px; vertical-align: -4px; }
+.hub-section h3 .pf-icon, .diag-col h3 .pf-icon { margin-right: 5px; }
+.pf-nav-item .pf-icon { color: #8590a6; }
+.pf-nav-item.active .pf-icon, .pf-nav-item:hover .pf-icon { color: #056de8; }
+
+/* 次级入口：图标 + 文案的清单行，不用卡片 */
+.pf-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 32px; }
 .pf-card {
-  background: #fff; border-radius: 6px; padding: 18px 20px; cursor: pointer;
-  border: 1px solid transparent; transition: border-color .15s, box-shadow .15s;
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 0; cursor: pointer;
+  border-bottom: 1px solid var(--zb-border);
 }
-.pf-card:hover { border-color: #056de8; box-shadow: 0 2px 10px rgba(5, 109, 232, .08); }
-.pf-card-icon { font-size: 20px; }
-.pf-card-title { font-size: 15px; font-weight: 600; margin-top: 6px; }
-.pf-card-desc { font-size: 13px; color: #8590a6; margin-top: 4px; line-height: 1.6; }
-.pf-card-more { font-size: 12px; color: #056de8; margin-top: 10px; }
+.pf-card-body { min-width: 0; }
+.pf-card-icon { color: var(--zb-gray); margin-top: 1px; }
+.pf-card:hover .pf-card-title, .pf-card:hover .pf-card-icon { color: #056de8; }
+.pf-card-title { font-size: 14px; font-weight: 600; }
+.pf-card-desc { font-size: 12px; color: #8590a6; margin-top: 3px; line-height: 1.6; }
+
+/* 去卡片化（续）：区块内部的「白底 / 描边 / 圆角」小方块一并摊平。
+   列表靠 1px 分隔线分组、靠字号与留白分层级，不再「区块里再套一层方框」。
+   只作用于个人中心（.pf-main），知伴学习中心页面维持原样。 */
+.pf-main .hub-hero,
+.pf-main .hub-section { background: transparent; border-radius: 0; }
+.pf-main .tl-list,
+.pf-main .zb-check-list { gap: 0; }
+.pf-main .tl-card,
+.pf-main .pf-map-item,
+.pf-main .pf-note,
+.pf-main .zb-check-item {
+  border: 0; border-radius: 0; background: transparent;
+  padding: 12px 0; margin: 0; border-bottom: 1px solid var(--zb-border);
+}
+.pf-main .tl-card:hover,
+.pf-main .pf-note:hover,
+.pf-main .zb-check-item:hover { border-bottom-color: var(--zb-blue); }
+
+/* 数值不再是灰底小方块：整行一条下分隔线，数字本身当视觉锚点 */
+.pf-main .pf-stat-row {
+  gap: 0 28px; margin: 2px 0 14px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--zb-border);
+}
+.pf-main .pf-stat { background: transparent; border: 0; border-radius: 0; padding: 0; }
+
+/* 首页「你最常卡住的概念」：去掉蓝底方框，改用左侧 2px 强调条分组 */
+.pf-main .pf-concepts { gap: 0 28px; }
+.pf-main .pf-concept-card {
+  background: transparent; border: 0; border-left: 2px solid #cfe0fb;
+  border-radius: 0; padding: 2px 0 2px 12px;
+}
+
+/* 去卡片化（续二）：小标签统一成方角浅底，不再用高饱和圆胶囊。
+   胶囊只是把几个词圈起来，在摊平后的排版里反而更显碎块；圆角、配色、内边距收到同一套尺度。
+   同样只作用于个人中心（.pf-main），知伴学习中心页面维持原样。 */
+.pf-main .diag-chip,
+.pf-main .pf-tag,
+.pf-main .pf-note-kind,
+.pf-main .zb-lv,
+.pf-main .zb-zhihu-src {
+  border-radius: 3px; padding: 1px 6px; font-size: 12px; line-height: 1.6;
+}
+.pf-main .diag-chip,
+.pf-main .pf-tag.due,
+.pf-main .pf-note-kind.guide,
+.pf-main .zb-lv.lv-mid { color: #96591a; background: #fdf6ec; border-color: #f0dfc4; }
+.pf-main .pf-note-kind { color: #1a62b8; background: #f2f7fd; border-color: #d5e4f7; }
+.pf-main .pf-tag.ok,
+.pf-main .zb-lv.lv-high,
+.pf-main .zb-zhihu-src { color: #2b7a45; background: #f2f8f4; border-color: #d7e9dd; }
+.pf-main .zb-lv.lv-low { color: #5f6b7a; background: #f5f7fa; border-color: #e6eaf0; }
+
+/* 按钮统一 4px 圆角；「刷新」不再是一枚白底小方块，退成可点的文字 */
+.pf-main .pf-btn { border-radius: 4px; }
+.pf-main .hub-refresh {
+  float: none; border: 0; background: transparent; border-radius: 4px;
+  padding: 2px 4px; color: var(--zb-blue);
+}
+.pf-main .hub-refresh:hover { color: var(--zb-blue); text-decoration: underline; }
+
+/* 首屏说明的虚线分隔改成实线，与全站 1px 分隔线一致 */
+.pf-main .pf-hero .pf-sub { border-top-style: solid; border-top-color: var(--zb-border); }
 
 /* ============ 个人中心 · 新模块（我的笔记 / 学习复盘 / 阅读足迹） ============ */
 /* 数值卡片 */

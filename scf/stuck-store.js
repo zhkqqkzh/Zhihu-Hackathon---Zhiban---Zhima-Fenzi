@@ -4,9 +4,9 @@
 // 存储后端可插拔：
 //   - 默认：进程内存（与旧行为一致），随函数实例存活。
 //   - 配置 STUCK_REDIS_URL（redis://... / rediss://...）后写 Redis：
-//     冷启动 / 实例轮换不丢，跨设备互见。连接不可达时 5s 内判定失败并降级回内存（不重连、不悬挂），
+//     冷启动 / 实例轮换不丢，跨设备互见。连接不可达时 5s 内判定失败并降级回内存，
 //     读写失败同样降级，契约不变。
-//   - redis 为可选依赖：需在 scf/ 目录 `npm install redis` 后重新打包；未安装则自动走内存。
+//   - ioredis 为依赖库（Node 12 兼容）：需在 scf/ 目录 `npm install ioredis` 后重新打包。
 //
 // 接口（均返回 Promise，且永不 reject —— 失败一律降级内存）：
 //   getBucket(articleId) -> bucket | null
@@ -41,42 +41,54 @@ function createMemoryStore() {
 }
 
 function createRedisStore(url) {
-  var redis = require('redis'); // 未安装则抛错 → 由 createStuckStore 降级内存
-  // reconnectStrategy:false —— node-redis v4 默认无限重连，主机不可达时 connect() 永不落定，
-  // 会让 /stuck 一路悬挂到函数超时；关掉重连后失败立即 reject，由上层降级。
-  var client = redis.createClient({ url: url, socket: { reconnectStrategy: false } });
-  client.on('error', function () {}); // 连接错误静默，读写失败时统一降级
-  var ready = client.isOpen
-    ? Promise.resolve(client)
-    : withTimeout(client.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis 连接').then(function () { return client; });
-  ready.catch(function () {}); // 先挂 catch，避免连接失败产生未处理的 rejection 拖垮函数进程
-  function close() {
-    // 仅在连接已建立时可 disconnect（ClientClosedError 会同步/异步抛出，故 isOpen 判断 + 双保险）
-    try {
-      if (client.isOpen) {
-        var p = client.disconnect();
-        if (p && typeof p.catch === 'function') p.catch(function () {});
+  var IORedis = require('ioredis');
+  // ioredis 自带有限重连（默认 maxRetriesPerRequest: null 即无限；
+  // 设置 maxRetriesPerRequest: 6，6 次失败后 reject pending 请求，约 5s 降级）
+  var client = new IORedis(url, {
+    maxRetriesPerRequest: 6,
+    retryStrategy: function (times) {
+      console.error('[stuck-store] Redis 重连 #' + times);
+      if (times > 6) {
+        console.error('[stuck-store] Redis 重连已达上限，放弃');
+        return null; // 停止重连
       }
-    } catch (e) {}
+      return Math.min(times * 200, 2000); // 退避 200ms → 2s
+    },
+    connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+    lazyConnect: true  // 不自动连接，由下面手动触发+超时控制
+  });
+  client.on('error', function (e) {
+    console.error('[stuck-store] Redis error:', e && e.message);
+  });
+
+  // 按需连（不必持久保存一个可能失败一次就永久 reject 的 promise）：
+  // 已 ready 直接复用；未连上则重新 connect（ioredis 自带重连/退避），
+  // connectTimeout 兜底，绝不让 /stuck 悬挂到函数超时。
+  // 注意：ioredis v5 的 connect() resolve 的是 void（v4 才是 client），
+  // 必须显式回传 client，否则调用方拿到 undefined。
+  function getClient() {
+    if (client.status === 'ready') return Promise.resolve(client);
+    return withTimeout(client.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis 连接')
+      .then(function () { return client; });
   }
+
   return {
     kind: 'redis',
-    close: close,
     getBucket: function (id) {
-      return ready.then(function (c) { return c.get(REDIS_BUCKET_KEY + id); }).then(function (raw) {
+      return getClient().then(function (c) { return c.get(REDIS_BUCKET_KEY + id); }).then(function (raw) {
         return raw ? JSON.parse(raw) : null;
       });
     },
     setBucket: function (id, bucket) {
-      return ready.then(function (c) {
+      return getClient().then(function (c) {
         return c.multi()
           .set(REDIS_BUCKET_KEY + id, JSON.stringify(bucket))
-          .sAdd(REDIS_ARTICLE_SET, id)
+          .sadd(REDIS_ARTICLE_SET, id)
           .exec();
       });
     },
     articleCount: function () {
-      return ready.then(function (c) { return c.sCard(REDIS_ARTICLE_SET); });
+      return getClient().then(function (c) { return c.scard(REDIS_ARTICLE_SET); });
     }
   };
 }
@@ -95,17 +107,18 @@ function createStuckStore() {
     return memory;
   }
 
-  var degraded = false;
+  // 带冷却的降级：一次失败只在本请求回退内存，冷却 COOL_DOWN_MS 后再试 Redis；
+  // 连上即自动恢复（不再永久 latch，也不再 close 客户端，保留 ioredis 自行重连的能力）。
+  var COOL_DOWN_MS = 30000;
+  var degradedUntil = 0;
   function guarded(name) {
     return function () {
       var args = Array.prototype.slice.call(arguments);
-      if (degraded) return memory[name].apply(memory, args);
+      var now = Date.now();
+      if (now < degradedUntil) return memory[name].apply(memory, args);
       return primary[name].apply(primary, args).catch(function (e) {
-        if (!degraded) {
-          degraded = true;
-          primary.close();
-          console.error('[stuck-store] Redis 不可用，后续降级内存：' + ((e && e.message) || e));
-        }
+        degradedUntil = now + COOL_DOWN_MS;
+        console.error('[stuck-store] Redis 失败，本请求降级内存（' + (COOL_DOWN_MS / 1000) + 's 后再试）：' + ((e && e.message) || e));
         return memory[name].apply(memory, args);
       });
     };

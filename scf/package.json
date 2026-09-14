@@ -4,6 +4,6 @@
   "type": "commonjs",
   "dependencies": {
     "express": "^4.19.2",
-    "redis": "^4.7.0"
+    "ioredis": "^5.4.1"
   }
 }

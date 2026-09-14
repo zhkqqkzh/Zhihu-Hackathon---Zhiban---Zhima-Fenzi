@@ -219,7 +219,7 @@ export function openPopup({ concept, articleId }) {
 
     if (!data.is_concept) {
       head.querySelector('.zb-title').textContent = '知伴';
-      bodyEl.replaceChildren(el('div', { class: 'zb-hint', text: `「${concept}」看起来不是一个需要解释的概念。换一个专业名词试试？` }));
+      bodyEl.replaceChildren(el('div', { class: 'zb-hint', text: `「${concept}」这段文字里没有可解释的概念。选中一个词试试，术语、专有名词都行。` }));
       return;
     }
 

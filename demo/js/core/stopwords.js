@@ -22,11 +22,13 @@ export function isProbablyPunctuationOrNoise(text) {
 }
 
 // 返回 null 表示通过；否则返回友好提示文案（宁可友好提示，不要静默失败）。
+// 拦截口径只覆盖「完全没有可解释含义」的字：精确命中的功能词、纯标点、一整段话。
+// 术语 / 专有名词（人名、机构名、产品名）/ 只是有点陌生的普通词，一律放行给模型判。
 export function interceptSelection(text) {
   const t = String(text || '').trim();
   if (!t) return '先划选一点内容，再来问我。';
   if (isProbablyPunctuationOrNoise(t)) return '这个好像不是一个概念，我也看不太懂。换一段文字试试？';
-  if (isStopword(t)) return '「' + t + '」是个常用词，不是一个需要解释的概念。试试划选一个专业名词？';
+  if (isStopword(t)) return '「' + t + '」是常用词，单独解释没什么意义。选个术语或专有名词试试？';
   if (t.length > 60) return '选得有点长啦。划选一个具体的概念（几个字到十几个字）效果最好。';
   return null;
 }
